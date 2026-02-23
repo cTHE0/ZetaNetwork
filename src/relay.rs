@@ -30,7 +30,7 @@ pub async fn main_relay() {
 		let connected_peers_clone = Arc::clone(&connected_peers);
 		connected_peers_clone.lock().await.insert(new_peer_address, writer);
 
-	    // Écoute des messages recus depuis ce nouveau peer connecté, et broadcast 
+	    // Écoute des messages recus depuis ce nouveau peer connecté, puis broadcast 
 	    tokio::spawn(handle_peer_connection(connected_peers_clone, new_peer_address, reader));
     }
 }
@@ -42,17 +42,17 @@ async fn handle_peer_connection(peers_ref: PeersMap, current_peer_address: Socke
     	match reader.read(&mut buffer).await {
     	    Ok(0) => {
                 peers_ref.lock().await.remove(&current_peer_address);
-                println!("❌ Peer disconnected: {}", current_peer_address);
+                println!("Peer disconnected: {}", current_peer_address);
                 break;
             }
             Ok(n) => {
                 let message = String::from_utf8_lossy(&buffer[..n]).trim().to_string();
-                println!("📨 Message from {}: {}", current_peer_address, message);
+                println!("Message from {}: {}", current_peer_address, message);
                 
                 relay_message(&peers_ref, current_peer_address, &message).await;
             }
             Err(e) => {
-                println!("⚠️  Error reading from {}: {}", current_peer_address, e);
+                println!("Error reading from {}: {}", current_peer_address, e);
                 peers_ref.lock().await.remove(&current_peer_address);
                 break;
             }
@@ -68,7 +68,7 @@ async fn relay_message(peers: &PeersMap, sender_addr: SocketAddr, message: &str)
             let formatted = format!("[{}] {}\n", sender_addr, message);
             match other_socket.write_all(formatted.as_bytes()).await {
                 Ok(_) => println!("  → Message sent to {}", other_addr),
-                Err(e) => println!("  ⚠️  Error: {}", e),
+                Err(e) => println!("Error: {}", e),
             }
         }
     }

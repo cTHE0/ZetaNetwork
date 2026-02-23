@@ -1,9 +1,11 @@
-use tokio::net::{TcpStream, TcpListener};
+use tokio::net::{TcpStream, TcpListener, UdpSocket};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{sleep, Duration, timeout};
 use std::net::SocketAddr;
-use tokio::process::Command;
 use crate::{Opts, Mode};
+
+use stunclient::StunClient;
+
 
 pub async fn main_client(opts: Opts) {
     // Connexion au relai
@@ -12,20 +14,23 @@ pub async fn main_client(opts: Opts) {
     let socket_relay = format!("{}:{}", ip_relay, port_relay);
     
     let mut relay_stream = TcpStream::connect(&socket_relay).await
-        .expect("[ERROR] Can't connect to relay");
+        .expect(&format!("[ERROR] Can't connect to relay {}", socket_relay));
     
     println!("\nConnected to relay {}", socket_relay);
 
-    // Mise à l'écart des noeuds derrière un NAT symétrique
-    if !peer_hole_punchable().await {
+    // Pas de Hole Punching pour les noeuds derrière un NAT symétrique
+    if peer_hole_punchable().await {
+        println!("[INFO] This pair can become a relay");
+    } else {
         println!("[WARNING] This pair can't become a relay (Symmetric NAT, Hole Punching impossible)");
-        return;
+        // return; // On essaye quand même au cas où
     }
+
 
     // Récupère l'adresse locale de cette connexion (pour connaître notre port)
     let local_addr = relay_stream.local_addr().unwrap();
     println!("Our local address: {}", local_addr);
-    
+
     match opts.mode {
         Mode::Listen => {
             listen_mode(&mut relay_stream, local_addr).await;
@@ -61,28 +66,23 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
     println!("Received dial peer address: {}", dial_peer_addr);
     
     // Étape 3 : TEST 1 - Connexion directe AVANT hole punching
-    println!("\n🧪 TEST 1: Direct connection BEFORE hole punching...");
     if test_direct_connection(&dial_peer_addr).await {
-        println!("✅ Direct connection works WITHOUT hole punching!");
-        start_p2p_communication(dial_peer_addr).await;
+        println!("Direct connection works WITHOUT hole punching.");
         return;
     }
-    println!("❌ Direct connection failed (expected with NAT)");
+    println!("Direct connection failed. Starting HOLE PUNCHING...");
     
-    // Étape 4 : Hole Punching - Écoute + envoi simultané
-    println!("\n🔨 Starting HOLE PUNCHING...");
-    
-    // Bind sur le même port local qu'on utilise avec le relai
-    let listener = TcpListener::bind(local_addr).await
+    // Étape 4 : Hole Punching - Écoute + envoi simultané    
+    let listener = TcpListener::bind(local_addr).await  // Bind sur le même port local qu'on utilise avec le relai
         .expect("Failed to bind listener");
-    println!("👂 Listening on {}", local_addr);
+    println!("Listening on {}", local_addr);
     
     // Envoi de paquets de "punch" pour ouvrir le NAT
     tokio::spawn(async move {
         for i in 0..5 {
             if let Ok(mut stream) = TcpStream::connect(dial_peer_addr).await {
                 let _ = stream.write_all(b"PUNCH\n").await;
-                println!("  👊 Punch {} sent to {}", i+1, dial_peer_addr);
+                println!("  Punch {} sent to {}", i+1, dial_peer_addr);
             }
             sleep(Duration::from_millis(200)).await;
         }
@@ -92,12 +92,10 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
     sleep(Duration::from_secs(2)).await;
     
     // Étape 5 : TEST 2 - Connexion directe APRÈS hole punching
-    println!("\n🧪 TEST 2: Direct connection AFTER hole punching...");
     if test_direct_connection(&dial_peer_addr).await {
-        println!("✅ Hole punching SUCCESS! Direct connection established!");
-        start_p2p_communication(dial_peer_addr).await;
+        println!("Hole punching SUCCESS, direct connection established.");
     } else {
-        println!("❌ Hole punching failed. NAT type might be too restrictive.");
+        println!("Hole punching failed.");
     }
 }
 
@@ -121,16 +119,14 @@ async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_
         .parse()
         .expect("Invalid peer address");
     
-    println!("📥 Received listen peer address: {}", listen_peer_addr);
+    println!("Received listen peer address: {}", listen_peer_addr);
     
     // Étape 3 : TEST 1 - Connexion directe AVANT hole punching
-    println!("\n🧪 TEST 1: Direct connection BEFORE hole punching...");
     if test_direct_connection(&listen_peer_addr).await {
-        println!("✅ Direct connection works WITHOUT hole punching!");
-        start_p2p_communication(listen_peer_addr).await;
+        println!("Direct connection works WITHOUT hole punching.");
         return;
     }
-    println!("❌ Direct connection failed (expected with NAT)");
+    println!("Direct connection failed.");
     
     // Étape 4 : Hole Punching - Envoi simultané
     println!("\n🔨 Starting HOLE PUNCHING...");
@@ -141,7 +137,7 @@ async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_
     for i in 0..5 {
         if let Ok(mut stream) = TcpStream::connect(listen_peer_addr).await {
             let _ = stream.write_all(b"PUNCH\n").await;
-            println!("  👊 Punch {} sent to {}", i+1, listen_peer_addr);
+            println!("  Punch {} sent to {}", i+1, listen_peer_addr);
         }
         sleep(Duration::from_millis(200)).await;
     }
@@ -149,12 +145,10 @@ async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_
     sleep(Duration::from_secs(1)).await;
     
     // Étape 5 : TEST 2 - Connexion directe APRÈS hole punching
-    println!("\n🧪 TEST 2: Direct connection AFTER hole punching...");
     if test_direct_connection(&listen_peer_addr).await {
-        println!("✅ Hole punching SUCCESS! Direct connection established!");
-        start_p2p_communication(listen_peer_addr).await;
+        println!("Hole punching SUCCESS. Direct connection established.");
     } else {
-        println!("❌ Hole punching failed. NAT type might be too restrictive.");
+        println!("Hole punching failed.");
     }
 }
 
@@ -177,71 +171,29 @@ async fn test_direct_connection(peer_addr: &SocketAddr) -> bool {
     }
 }
 
-async fn start_p2p_communication(peer_addr: SocketAddr) {
-    println!("\n🎉 P2P CONNECTION ESTABLISHED with {}", peer_addr);
-    println!("Type messages to send (Ctrl+C to quit):\n");
-    
-    let mut stream = TcpStream::connect(peer_addr).await
-        .expect("Failed to reconnect for P2P");
-    
-    let (mut reader, mut writer) = stream.into_split();
-    
-    // Thread d'écoute
-    tokio::spawn(async move {
-        let mut buf = [0u8; 1024];
-        while let Ok(n) = reader.read(&mut buf).await {
-            if n == 0 { break; }
-            print!("\n[PEER] {}\n> ", String::from_utf8_lossy(&buf[..n]).trim());
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        }
-    });
-    
-    // Envoi de messages
-    let stdin = std::io::stdin();
-    loop {
-        print!("> ");
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
-        
-        let mut input = String::new();
-        stdin.read_line(&mut input).unwrap();
-        
-        let msg = format!("{}\n", input.trim());
-        writer.write_all(msg.as_bytes()).await.unwrap();
-    }
-}
-
 async fn peer_hole_punchable() -> bool {
-	// Fait une requête à un serveur STUN  (en CLI : >>> stunclient stun.l.google.com 3478)
-    let output = Command::new("stunclient")  
-        .arg("stun.l.google.com")
-        .arg("3478")
-        .output()
-        .await
-        .expect("Failed to run stunclient");
-    let result = String::from_utf8_lossy(&output.stdout);
+    // Création du socket pour accéder au serveur STUN
+    let udp = UdpSocket::bind("0.0.0.0:0").await.unwrap();
 
-    // Interpète les résultats de la requête
-    if let Some((local_port, mapped_port)) = extract_ports(&result) {
-    	return local_port == mapped_port;
-    } else {
-    	println!("[ERROR] We can't verify if this peer is behind a Symmetric NAT or not.");
-    	return true;  // Si l'on est pas sûr que le pair est derrière du NAT symétrique, on essaye quand meme le hole punching
-    }
-}
+    // Création des clients et envoie de la requête aux serveurs STUN
+    let client1 = StunClient::new("74.125.250.129:3478".parse().unwrap());  // Serveur STUN stun.l.google.com 3478
+    let client2 = StunClient::new("46.225.95.169:3478".parse().unwrap());  // Serveur STUN stun.nextcloud.com 3478
 
+    // Récupération des adresses publiques de notre noeud, en fonction du serveur public contacté
+    let public_addr1 = match client1.query_external_address_async(&udp).await {
+        Ok(addr) => Some(addr),
+        Err(e) => {
+        	println!("Erreur STUN : {:?}", e);
+        	None
+        },
+    };
+    let public_addr2 = match client2.query_external_address_async(&udp).await {
+        Ok(addr) => Some(addr),
+        Err(e) => {
+        	println!("Erreur STUN : {:?}", e);
+        	None
+        },
+    };
 
-fn extract_ports(stun_output: &str) -> Option<(u16, u16)> {
-    let mut local_port = None;
-    let mut mapped_port = None;
-    
-    // Cherche les ports dans les résultats de la requête
-    for line in stun_output.lines() {
-        if line.contains("Local address:") {
-            local_port = line.split(':').last().and_then(|s| s.trim().parse().ok());
-        } else if line.contains("Mapped address:") {
-            mapped_port = line.split(':').last().and_then(|s| s.trim().parse().ok());
-        }
-    }
-    
-    Some((local_port?, mapped_port?))
+    public_addr1.is_some() && public_addr1 == public_addr2
 }
