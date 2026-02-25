@@ -29,7 +29,7 @@ pub async fn main_client(opts: Opts) {
 
     // Récupère l'adresse locale de cette connexion (pour connaître notre port)
     let local_addr = relay_stream.local_addr().unwrap();
-    println!("\n\n## Let's create direct connection with others peer ##\nOur local address: {}", local_addr);
+    println!("\n\n## Let's create direct connection with other peers ##\nOur local address: {}", local_addr);
 
     match opts.mode {
         Mode::Listen => {
