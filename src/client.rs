@@ -89,7 +89,7 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
 	socket.bind(local_addr).unwrap();
 	let listener = socket.listen(1).unwrap();
 
-	match timeout(Duration::from_secs(5), listener.accept()).await {
+	match timeout(Duration::from_secs(15), listener.accept()).await {
 	    Ok(Ok((stream, addr))) => {
 	        println!("✓ Direct connection from {}", addr);
 	        return;
