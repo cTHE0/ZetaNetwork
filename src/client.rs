@@ -78,11 +78,20 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
     println!("Sent 'LISTEN_READY:{}' to relay", dial_peer_addr);
     
     // Étape 3 : Test de connexion directe (avant hole punching)
-    if test_direct_connection(&dial_peer_addr).await {
-        println!("Direct connection works WITHOUT hole punching.");
-        return;
-    }
-    println!("Direct connection failed. Starting HOLE PUNCHING...");
+    let listener = TcpListener::bind(local_addr).await
+	    .expect("Failed to bind");
+	println!("Listening for dial on {}", local_addr);
+
+	match timeout(Duration::from_secs(5), listener.accept()).await {
+	    Ok(Ok((mut stream, peer_addr))) => {
+	        println!("✓ Direct connection from {}", peer_addr);
+	        // connexion établie, utiliser stream...
+	        return;
+	    }
+	    _ => {
+	        println!("No direct connection. Starting HOLE PUNCHING...");
+	    }
+	}
     
     // Étape 4 : Hole Punching - Écoute + envoi simultané    
     let listener = TcpListener::bind(local_addr).await  // Bind sur le même port local qu'on utilise avec le relai
@@ -148,11 +157,16 @@ async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_
 	};
 
     // Étape 3 : TEST 1 - Connexion directe AVANT hole punching
-    if test_direct_connection(&listen_peer_addr).await {
-        println!("Direct connection works WITHOUT hole punching.");
-        return;
-    }
-    println!("Direct connection failed.");
+	match timeout(Duration::from_secs(5), TcpStream::connect(listen_peer_addr)).await {
+	    Ok(Ok(mut stream)) => {
+	        println!("✓ Direct connection to {}", listen_peer_addr);
+	        // connexion établie, utiliser stream...
+	        return;
+	    }
+	    _ => {
+	        println!("No direct connection. Starting HOLE PUNCHING...");
+	    }
+	}
     
     // Étape 4 : Hole Punching - Envoi simultané
     println!("\n🔨 Starting HOLE PUNCHING...");
