@@ -1,4 +1,4 @@
-use tokio::net::{TcpStream, TcpListener, UdpSocket, TcpSocket};
+use tokio::net::{TcpStream, UdpSocket, TcpSocket};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{sleep, Duration, timeout};
 use std::net::SocketAddr;
@@ -96,32 +96,25 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
 	    }
 	    _ => println!("Direct connection failed, starting hole punching...")
 	}
+	
+	// Étape 4 : Hole Punching - connect() simultané
+	println!("🔨 Starting HOLE PUNCHING...");
 
-    // Étape 4 : Hole Punching - Écoute + envoi simultané    
-    let listener = TcpListener::bind(local_addr).await  // Bind sur le même port local qu'on utilise avec le relai
-        .expect("Failed to bind listener");
-    println!("Listening on {}", local_addr);
-    
-    // Envoi de paquets de "punch" pour ouvrir le NAT
-    tokio::spawn(async move {
-        for i in 0..5 {
-            if let Ok(mut stream) = TcpStream::connect(dial_peer_addr).await {
-                let _ = stream.write_all(b"PUNCH\n").await;
-                println!("  Punch {} sent to {}", i+1, dial_peer_addr);
-            }
-            sleep(Duration::from_millis(200)).await;
-        }
-    });
-    
-    // Attente de connexion du peer Dial
-    sleep(Duration::from_secs(2)).await;
-    
-    // Étape 5 : TEST 2 - Connexion directe APRÈS hole punching
-    if test_direct_connection(&dial_peer_addr).await {
-        println!("Hole punching SUCCESS, direct connection established.");
-    } else {
-        println!("Hole punching failed.");
-    }
+	let socket = TcpSocket::new_v4().unwrap();
+	socket.set_reuseaddr(true).unwrap();
+	socket.bind(local_addr).unwrap(); // même port que relay
+	let p2p_stream = socket.connect(dial_peer_addr).await;
+
+	// Étape 5 : Résultat
+	match p2p_stream {
+	    Ok(mut stream) => {
+	        println!("✓ Hole punching SUCCESS, direct connection established with {}", dial_peer_addr);
+	        // utiliser stream pour communiquer...
+	    }
+	    Err(e) => {
+	        println!("✗ Hole punching failed: {}", e);
+	    }
+	}
 }
 
 // ==================== MODE DIAL ====================
@@ -169,64 +162,28 @@ async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_
 	    }
 	    _ => println!("Direct connection failed, starting hole punching...")
 	}
-	    
-    // Étape 4 : Hole Punching - Envoi simultané
-    println!("\n🔨 Starting HOLE PUNCHING...");
-    
-    sleep(Duration::from_millis(500)).await;  // Petit délai pour sync
-    
-    // Envoi de paquets de "punch"
-    for i in 0..5 {
-        if let Ok(mut stream) = TcpStream::connect(listen_peer_addr).await {
-            let _ = stream.write_all(b"PUNCH\n").await;
-            println!("  Punch {} sent to {}", i+1, listen_peer_addr);
-        }
-        sleep(Duration::from_millis(200)).await;
-    }
-    
-    sleep(Duration::from_secs(1)).await;
-    
-    // Étape 5 : TEST 2 - Connexion directe APRÈS hole punching
-    if test_direct_connection(&listen_peer_addr).await {
-        println!("Hole punching SUCCESS. Direct connection established.");
-    } else {
-        println!("Hole punching failed.");
-    }
+
+	// Étape 4 : Hole Punching - connect() simultané
+	println!("🔨 Starting HOLE PUNCHING...");
+
+	let socket = TcpSocket::new_v4().unwrap();
+	socket.set_reuseaddr(true).unwrap();
+	socket.bind(local_addr).unwrap(); // même port que relay
+	let p2p_stream = socket.connect(listen_peer_addr).await;
+
+	// Étape 5 : Résultat
+	match p2p_stream {
+	    Ok(mut stream) => {
+	        println!("✓ Hole punching SUCCESS, direct connection established with {}", listen_peer_addr);
+	        // utiliser stream pour communiquer...
+	    }
+	    Err(e) => {
+	        println!("✗ Hole punching failed: {}", e);
+	    }
+	}
 }
 
 // ==================== TESTS & UTILS ====================
-async fn test_direct_connection(peer_addr: &SocketAddr) -> bool {
-    println!("Testing connection to: {}", peer_addr);
-    
-    match timeout(Duration::from_secs(3), TcpStream::connect(peer_addr)).await {
-        Ok(Ok(mut stream)) => {
-            println!("✓ Connected to {}", peer_addr);
-            if stream.write_all(b"PING\n").await.is_ok() {
-                println!("✓ Sent PING");
-                let mut buf = [0u8; 16];
-                if let Ok(n) = timeout(Duration::from_secs(1), stream.read(&mut buf)).await {
-                    if n.is_ok() {
-                        println!("✓ Received response");
-                        return true;
-                    }
-                }
-                println!("✗ Read failed or timeout");
-            } else {
-                println!("✗ Write failed");
-            }
-            false
-        }
-        Ok(Err(e)) => {
-            println!("✗ Connection failed: {}", e);
-            false
-        }
-        Err(_) => {
-            println!("✗ Connection timeout (> 3 sec)");
-            false
-        }
-    }
-}
-
 async fn peer_hole_punchable() -> bool {
     // Création du socket pour accéder au serveur STUN
     let udp = UdpSocket::bind("0.0.0.0:0").await.unwrap();
