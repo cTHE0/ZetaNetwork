@@ -2,6 +2,7 @@ use tokio::net::{TcpStream, TcpListener, UdpSocket};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::{sleep, Duration, timeout};
 use std::net::SocketAddr;
+use std::io::{self, Write};
 use crate::{Opts, Mode};
 
 use stunclient::StunClient;
@@ -15,8 +16,8 @@ pub async fn main_client(opts: Opts) {
     
     let mut relay_stream = TcpStream::connect(&socket_relay).await
         .expect(&format!("[ERROR] Can't connect to relay {}", socket_relay));
-    
-    println!("\nConnected to relay {}", socket_relay);
+    let local_addr = relay_stream.local_addr().unwrap();
+    println!("\nConnected to relay {}", socket_relay);    
 
     // Pas de Hole Punching pour les noeuds derrière un NAT symétrique
     if peer_hole_punchable().await {
@@ -27,10 +28,7 @@ pub async fn main_client(opts: Opts) {
     }
 
 
-    // Récupère l'adresse locale de cette connexion (pour connaître notre port)
-    let local_addr = relay_stream.local_addr().unwrap();
     println!("\n\n## Let's create direct connection with other peers ##\nOur local address: {}", local_addr);
-
     match opts.mode {
         Mode::Listen => {
             listen_mode(&mut relay_stream, local_addr).await;
@@ -45,36 +43,41 @@ pub async fn main_client(opts: Opts) {
 }
 
 // ==================== MODE LISTEN ====================
-async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {    
-    // Étape 1 : Annoncer au relai qu'on est prêt à recevoir
-    let msg = format!("LISTEN_READY\n");
-    relay_stream.write_all(msg.as_bytes()).await.unwrap();
+async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
+	// Étape 0 : séparer le flux de données du canal vers le relay
+	let (mut relay_read, mut relay_write) = relay_stream.split();
+    
+    // Étape 1 : Écouter jusqu'à recevoir l'adresse du peer Dial via le relai
+    println!("Waiting for the dial's address (LISTEN MODE)...");
+    let dial_peer_addr: SocketAddr = loop { 
+    	// Récupération des message reçu
+    	let mut buf = [0; 1024];
+    	let n = relay_read.read(&mut buf).await.unwrap();
+	    if n == 0 {
+	    	println!("This pair is disconnected from the relay"); 
+	    	return; 
+	    }
+	    let message = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+
+	    // Recherche de l'adresse dans le message du dial
+	    if let Some(addr_str) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
+	        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+	            println!("Received dial peer address: {}", addr);
+	            break addr;
+	        }
+	    }
+
+	    // Affichage du message reçu, si ce n'est pas celui attendu
+	    println!("[RECEIVED] '{}'", message);
+	    io::stdout().flush().unwrap();
+	};
+
+    // Étape 2 : Annoncer au relai qu'on est prêt à recevoir
+    let msg = format!("LISTEN_READY{}\n", dial_peer_addr);
+    relay_write.write_all(msg.as_bytes()).await.unwrap();
     println!("Sent 'LISTEN_READY' to relay");
     
-    // Étape 2 : Recevoir l'adresse du peer Dial via le relai
-    println!("Waiting for dial peer... (LISTEN MODE)");
-    let dial_peer_addr:SocketAddr;
-    let mut buf = [0u8; 512];
-
-    loop {
-	    let n = relay_stream.read(&mut buf).await.unwrap();
-	    let response = String::from_utf8_lossy(&buf[..n]);
-	
-	    if let Some(addr_str) = response
-		    .trim()
-		    .split('[')
-		    .nth(1)
-		    .and_then(|s| s.split(']').next())
-	    {
-	        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-	            dial_peer_addr = addr;
-	        	println!("Received one dial peer address: {}", dial_peer_addr);
-	            break;
-	        }
-    	}
-	}
-    
-    // Étape 3 : Connexion directe AVANT hole punching
+    // Étape 3 : Test de connexion directe (avant hole punching)
     if test_direct_connection(&dial_peer_addr).await {
         println!("Direct connection works WITHOUT hole punching.");
         return;
@@ -110,26 +113,40 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
 
 // ==================== MODE DIAL ====================
 async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
-    println!("\nDIAL MODE: Initiating connection to {}:{}...", remote_peer_ip, remote_peer_port);
+
+	// Étape 0 : séparer le flux de données du canal vers le relay
+	let (mut relay_read, mut relay_write) = relay_stream.split();
     
     // Étape 1 : Demander au relai de nous connecter au peer Listen
-    let msg = format!("DIAL_REQUEST:{}\n", remote_peer_ip);
-    relay_stream.write_all(msg.as_bytes()).await.unwrap();
-    println!("Sent 'DIAL_REQUEST:{}' to relay", remote_peer_ip);
+    println!("\nInitiating connection to {}:{} (DIAL MODE)...", remote_peer_ip, remote_peer_port);
+    let msg = format!("DIAL_REQUEST:{}:{}\n", remote_peer_ip, remote_peer_port);
+    relay_write.write_all(msg.as_bytes()).await.unwrap();
+    println!("Sent 'DIAL_REQUEST:{}:{}' to relay", remote_peer_ip, remote_peer_port);
     
     // Étape 2 : Recevoir l'adresse du peer Listen via le relai
-    let mut buf = [0u8; 512];
-    let n = relay_stream.read(&mut buf).await.unwrap();
-    let response = String::from_utf8_lossy(&buf[..n]);
-    
-    let listen_peer_addr: SocketAddr = response.trim()
-        .strip_prefix("LISTEN_PEER:")
-        .expect("Invalid response format")
-        .parse()
-        .expect("Invalid peer address");
-    
-    println!("Received listen peer address: {}", listen_peer_addr);
-    
+    let listen_peer_addr:SocketAddr = loop { 
+    	// Récupération des message reçu
+    	let mut buf = [0; 1024];
+    	let n = relay_read.read(&mut buf).await.unwrap();
+	    if n == 0 {
+	    	println!("This pair is disconnected from the relay"); 
+	    	return; 
+	    }
+	    let message = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+
+	    // Recherche de l'adresse dans le message du dial
+	    if let Some(addr_str) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
+	        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+	            println!("Received listen peer address: {}", addr);
+	            break addr;
+	        }
+	    }
+
+	    // Affichage du message reçu, si ce n'est pas celui attendu
+	    println!("[RECEIVED] '{}'", message);
+	    io::stdout().flush().unwrap();
+	};
+
     // Étape 3 : TEST 1 - Connexion directe AVANT hole punching
     if test_direct_connection(&listen_peer_addr).await {
         println!("Direct connection works WITHOUT hole punching.");
@@ -163,20 +180,34 @@ async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_
 
 // ==================== TESTS & UTILS ====================
 async fn test_direct_connection(peer_addr: &SocketAddr) -> bool {
+    println!("Testing connection to: {}", peer_addr);
+    
     match timeout(Duration::from_secs(3), TcpStream::connect(peer_addr)).await {
         Ok(Ok(mut stream)) => {
-            // Test d'envoi/réception
+            println!("✓ Connected to {}", peer_addr);
             if stream.write_all(b"PING\n").await.is_ok() {
+                println!("✓ Sent PING");
                 let mut buf = [0u8; 16];
                 if let Ok(n) = timeout(Duration::from_secs(1), stream.read(&mut buf)).await {
                     if n.is_ok() {
+                        println!("✓ Received response");
                         return true;
                     }
                 }
+                println!("✗ Read failed or timeout");
+            } else {
+                println!("✗ Write failed");
             }
             false
         }
-        _ => false
+        Ok(Err(e)) => {
+            println!("✗ Connection failed: {}", e);
+            false
+        }
+        Err(_) => {
+            println!("✗ Connection timeout (> 3 sec)");
+            false
+        }
     }
 }
 
