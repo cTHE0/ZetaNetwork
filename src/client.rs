@@ -82,7 +82,7 @@ async fn listen_mode(mut relay_stream: TcpStream, local_addr: SocketAddr) {
 	drop(relay_stream); // Libère immédiatement le socket
 
 	// Petit délai pour laisser le système nettoyer (optionnel mais prudent)
-	tokio::time::sleep(Duration::from_millis(100)).await;
+	tokio::time::sleep(Duration::from_millis(5000)).await;
 
 	// Créer un socket avec réutilisation d'adresse
 	let socket = TcpSocket::new_v4().expect("Failed to create socket");
