@@ -118,14 +118,14 @@ async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_
 	    println!("[RECEIVED] '{}'", message);
 	};
 
-    // Étape 3 : TEST 1 - Connexion directe AVANT hole punching
+    // Étape 3 : Test de connexion directe (avant hole punching)
     sleep(Duration::from_secs(3)).await;
     match timeout(Duration::from_secs(5), TcpStream::connect(listen_peer_addr)).await {
 	    Ok(Ok(stream)) => {
 	        println!("✓ Direct connection to {}", listen_peer_addr);
 	        return;
 	    }
-	    _ => println!("Direct connection failed, starting hole punching...")
+	    _ => println!("Direct connection failed")
 	}
 
 	// Étape 4 : Hole Punching - connect() simultané
