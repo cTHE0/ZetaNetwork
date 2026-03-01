@@ -28,19 +28,19 @@ pub async fn main_client(opts: Opts) {
     println!("\n\n## Let's create direct connection with other peers ##\nOur local address: {}", local_addr);
     match opts.mode {
         Mode::Listen => {
-            listen_mode(&mut relay_stream, local_addr).await;
+            listen_mode(relay_stream, local_addr).await;
         }
         Mode::Dial => {
             let remote_peer_ip = opts.remote_peer_ip.expect("--remote-peer-ip requis");
             let remote_peer_port = opts.remote_peer_port.expect("--remote-peer-port requis");
-            dial_mode(&mut relay_stream, local_addr, &remote_peer_ip, &remote_peer_port).await;
+            dial_mode(relay_stream, local_addr, &remote_peer_ip, &remote_peer_port).await;
         }
         _ => unreachable!()
     }
 }
 
 // ==================== MODE LISTEN ====================
-async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
+async fn listen_mode(mut relay_stream: TcpStream, local_addr: SocketAddr) {
 	// Étape 1 : Écouter jusqu'à recevoir l'adresse du peer Dial via le relai
     println!("Waiting for the dial's address (LISTEN MODE)...");
     let dial_peer_addr: SocketAddr = loop {
@@ -86,6 +86,7 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
 
 	// Créer un socket avec réutilisation d'adresse
 	let socket = TcpSocket::new_v4().expect("Failed to create socket");
+	socket.set_reuseport(true).ok();
 	socket.set_reuseaddr(true).expect("Failed to set reuseaddr");
 	socket.bind(local_addr).expect("Failed to bind");
 	let listener = socket.listen(1024).expect("Failed to listen");
@@ -101,7 +102,7 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
 }
 
 // ==================== MODE DIAL ====================
-async fn dial_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
+async fn dial_mode(mut relay_stream: TcpStream, local_addr: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
 
 	// Étape 0 : séparer le flux de données du canal vers le relay
 	let (mut relay_read, mut relay_write) = relay_stream.split();
