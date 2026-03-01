@@ -71,6 +71,7 @@ async fn listen_mode(relay_stream: &mut TcpStream, local_addr: SocketAddr) {
     println!("Sent 'LISTEN_READY:{}' to relay", dial_peer_addr);
     
     // Étape 3 : Test de connexion directe (avant hole punching)
+    let _ = relay_stream.shutdown().await;
     let listener = TcpListener::bind(local_addr).await.unwrap();
     println!("Listening...");
 
