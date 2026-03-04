@@ -17,19 +17,17 @@ pub async fn main_client(opts: Opts) {
     let port_relay = opts.relay_port.expect("--relay-port est requis");
     let addr_relay = format!("{}:{}", ip_relay, port_relay).parse().expect("Wrong address format");
     let socket_relay = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
-    let local_addr = socket_relay.local_addr().expect("Failed to get local address");
     let message = "HELLO_RELAY";
     socket_relay.send_to(message.as_bytes(), &addr_relay).await;
 
-    println!("\n\n## Let's create direct connection with other peers ##\nOur local address: {}", local_addr);
+    println!("\n\n## Let's create direct connection with other peers ##");
     match opts.mode {
         Mode::Listen => {
-            listen_mode(socket_relay, addr_relay, local_addr).await;
+            listen_mode(socket_relay, addr_relay).await;
         }
         Mode::Dial => {
             dial_mode(
-                socket_relay,
-                addr_relay, local_addr, 
+                socket_relay, addr_relay, 
                 &opts.remote_peer_ip.expect("--remote-peer-ip requis"), 
                 &opts.remote_peer_port.expect("--remote-peer-port requis")
                 ).await;
@@ -39,7 +37,7 @@ pub async fn main_client(opts: Opts) {
 }
 
 // ==================== MODE LISTEN ====================
-async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, local_addr: SocketAddr) {
+async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr) {
 	// Étape 1 : Écouter jusqu'à recevoir l'adresse du peer Dial via le relai
     println!("Waiting for the dial's address (LISTEN MODE)...");
     let dial_peer_addr: SocketAddr = loop {
@@ -81,7 +79,7 @@ async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, local_addr
 }
 
 // ==================== MODE DIAL ====================
-async fn dial_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, local_addr: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
+async fn dial_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
     // Étape 1 : Demander au relai de nous connecter au peer Listen
     println!("\nInitiating connection to {}:{} (DIAL MODE)...", remote_peer_ip, remote_peer_port);
     let msg = format!("DIAL_REQUEST:{}:{}\n", remote_peer_ip, remote_peer_port);
