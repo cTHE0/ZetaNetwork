@@ -63,7 +63,7 @@ async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr) {
 	};
 
     // Étape 2 : Annoncer au relai qu'on est prêt à recevoir
-    let msg = format!("LISTEN_READY:{}\n", dial_peer_addr);
+    let msg = format!("LISTEN_READY:{}", dial_peer_addr);
     socket_relay.send_to(msg.as_bytes(), addr_relay).await.unwrap();
     println!("Sent '{}' to relay", msg);
     
