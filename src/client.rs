@@ -1,4 +1,5 @@
 use tokio::net::UdpSocket;
+use tokio::time::{sleep, Duration};
 use std::net::SocketAddr;
 use crate::{Opts, Mode};
 
@@ -102,7 +103,7 @@ async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr) {
 async fn dial_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
     // Étape 1 : Demander au relai de nous connecter au peer Listen
     println!("\nInitiating connection to {}:{} (DIAL MODE)...", remote_peer_ip, remote_peer_port);
-    let msg = format!("DIAL_REQUEST:{}:{}\n", remote_peer_ip, remote_peer_port);
+    let msg = format!("DIAL_REQUEST:{}:{}", remote_peer_ip, remote_peer_port);
     let _ = socket_relay.send_to(msg.as_bytes(), addr_relay).await.unwrap();
     println!("Sent '{}' to relay", msg);
     
@@ -130,6 +131,7 @@ async fn dial_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, remote_peer_
 	};
 
     // Étape 3 : Test de connexion directe (avant hole punching)
+    sleep(Duration::from_secs(1)).await;
 	let socket_listen = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
     socket_listen.send_to("Direct connection".as_bytes(), listen_peer_addr).await.unwrap();
     println!("Sent '{}' to relay", msg);
