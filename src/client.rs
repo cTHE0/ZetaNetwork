@@ -8,7 +8,7 @@ use crate::nat_detector::nat_detector;
 
 pub async fn main_client(opts: Opts) {
 	// Description de ce noeud
-	println!("Looking for NAT type and public IP address...");
+	println!("\nLooking for NAT type and public IP address...");
 	let (nat_type, public_addr) = nat_detector().await
 		.expect("[ERROR] NAT type not detected");
     println!("   -> {:?}\n   -> {}", nat_type, public_addr);
@@ -18,17 +18,21 @@ pub async fn main_client(opts: Opts) {
     let port_relay = opts.relay_port.expect("--relay-port est requis");
     let addr_relay = format!("{}:{}", ip_relay, port_relay).parse().expect("Wrong address format");
     let socket_relay = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
+    let local_addr = socket_relay.local_addr().expect("Failed to get local address");
     let message = "HELLO_RELAY";
     let _ = socket_relay.send_to(message.as_bytes(), &addr_relay).await;
 
     println!("\n\n## Let's create direct connection with other peers ##");
     match opts.mode {
         Mode::Listen => {
-            listen_mode(socket_relay, addr_relay).await;
+            listen_mode(socket_relay, addr_relay,
+                local_addr
+            	).await;
         }
         Mode::Dial => {
             dial_mode(
                 socket_relay, addr_relay, 
+                local_addr,
                 &opts.remote_peer_ip.expect("--remote-peer-ip requis"), 
                 &opts.remote_peer_port.expect("--remote-peer-port requis")
                 ).await;
@@ -38,7 +42,7 @@ pub async fn main_client(opts: Opts) {
 }
 
 // ==================== MODE LISTEN ====================
-async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr) {
+async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, local_addr: SocketAddr) {
 	// Étape 1 : Écouter jusqu'à recevoir l'adresse du peer Dial via le relai
     println!("Waiting for the dial's address (LISTEN MODE)...");
     let dial_peer_addr: SocketAddr = loop {
@@ -70,7 +74,7 @@ async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr) {
     
     // Étape 3 : Test de connexion directe (avant hole punching)
     loop {
-	    let socket_dial = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
+	    let socket_dial = UdpSocket::bind(local_addr).await.expect("Failed to bind");
     	// Récupération des message reçu
     	let mut buf = [0; 1024];
     	let (size, addr_last_jump) = socket_dial.recv_from(&mut buf).await.expect("Nothing received");
@@ -100,7 +104,7 @@ async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr) {
 }
 
 // ==================== MODE DIAL ====================
-async fn dial_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
+async fn dial_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, local_addr: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
     // Étape 1 : Demander au relai de nous connecter au peer Listen
     println!("\nInitiating connection to {}:{} (DIAL MODE)...", remote_peer_ip, remote_peer_port);
     let msg = format!("DIAL_REQUEST:{}:{}", remote_peer_ip, remote_peer_port);
@@ -132,7 +136,7 @@ async fn dial_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, remote_peer_
 
     // Étape 3 : Test de connexion directe (avant hole punching)
     sleep(Duration::from_secs(1)).await;
-	let socket_listen = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
+	let socket_listen = UdpSocket::bind(local_addr).await.expect("Failed to bind");
     socket_listen.send_to("Direct connection".as_bytes(), listen_peer_addr).await.unwrap();
     println!("Sent '{}' to relay", msg);
 
