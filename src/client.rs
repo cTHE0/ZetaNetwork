@@ -74,10 +74,9 @@ async fn listen_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, local_addr
     
     // Étape 3 : Test de connexion directe (avant hole punching)
     loop {
-	    let socket_dial = UdpSocket::bind(local_addr).await.expect("Failed to bind");
     	// Récupération des message reçu
     	let mut buf = [0; 1024];
-    	let (size, addr_last_jump) = socket_dial.recv_from(&mut buf).await.expect("Nothing received");
+    	let (size, addr_last_jump) = socket_relay.recv_from(&mut buf).await.expect("Nothing received");
 	    if size <= 0 || size >= 1024  {
 	    	println!("The message's size is incorrect({})", size); 
 	    	return; 
@@ -136,8 +135,7 @@ async fn dial_mode(socket_relay: UdpSocket, addr_relay: SocketAddr, local_addr: 
 
     // Étape 3 : Test de connexion directe (avant hole punching)
     sleep(Duration::from_secs(1)).await;
-	let socket_listen = UdpSocket::bind(local_addr).await.expect("Failed to bind");
-    socket_listen.send_to("Direct connection".as_bytes(), listen_peer_addr).await.unwrap();
+    socket_relay.send_to("Direct connection".as_bytes(), listen_peer_addr).await.unwrap();
     println!("Sent '{}' to relay", msg);
 
 	// Étape 4 : Hole Punching - connect() simultané
