@@ -68,12 +68,18 @@ async fn listen_mode(socket: UdpSocket, addr_relay: SocketAddr) {
     let _ = socket.send_to(msg.as_bytes(), addr_relay).await.unwrap();
     println!("Sent '{}' to relay", msg);
     
-    // Étape 3 : Test de connexion directe (avant hole punching)
-    let _ = timeout(Duration::from_secs(5), async { 
+    // Étape 3 : Hole Punching (envoyer un message au DIAL même s'il va 
+    // certainement être intercepté par le NAT de ce dernier)
+    let msg = format!("PUNCHING_THE_HOLE:{}", dial_peer_addr);
+    let _ = socket.send_to(msg.as_bytes(), dial_peer_addr).await.unwrap();
+    println!("Sent '{}' to dial", msg);
+    
+    // Étape 4 : Test de connexion directe (reception)
+    let timeout_result = timeout(Duration::from_secs(5), async { 
     	loop {
-	    	// Récupération des message reçu
+	    	// Récupération des messages reçus
 	    	let mut buf = [0; 1024];
-	    	let (size, addr_last_jump) = socket.recv_from(&mut buf).await.expect("Nothing received");
+	    	let (size, _) = socket.recv_from(&mut buf).await.expect("Nothing received");
 		    if size <= 0 || size >= 1024  {
 		    	println!("The message's size is incorrect({})", size); 
 		    	return; 
@@ -81,22 +87,28 @@ async fn listen_mode(socket: UdpSocket, addr_relay: SocketAddr) {
 		    let message = String::from_utf8_lossy(&buf[..size]).trim().to_string();
 
 		    // Recherche de l'adresse dans le message du dial
-		    if let Some(addr_last_jump) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
-		        if let Ok(addr_sender) = addr_last_jump.parse::<SocketAddr>() {
+		    if let Some(addr_sender) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
+		        if let Ok(addr_sender) = addr_sender.parse::<SocketAddr>() {
 		        	if addr_sender == dial_peer_addr {
-		            	println!("Direction connection is possible!");
+		            	println!("[SUCCEED] We can receive messages from {}", dial_peer_addr);
 		            	break;
 		            }
+				    // Affichage du message reçu, si ce n'est pas celui attendu
+				    println!("[{}] {}", addr_sender, message);
 		        }
 		    }
-		    // Affichage du message reçu, si ce n'est pas celui attendu
-		    println!("[{}] {}", addr_last_jump, message);
 		}
 	}).await;
-	println!("Direction connection failed");
-	
-	// Étape 4 : Hole Punching - connect() simultané
-	println!("\nStarting HOLE PUNCHING...");
+
+	if timeout_result.is_err() {
+		println!("[FAIL] We can not receive messages from {} (timeout)", dial_peer_addr);
+	}
+
+	// Étape 5 : Test de connexion directe (envoi)
+    sleep(Duration::from_secs(1)).await;
+    let msg = format!("HELLO_DIAL_FROM_LISTEN:{}", dial_peer_addr);
+    let _ = socket.send_to(msg.as_bytes(), dial_peer_addr).await.unwrap();
+    println!("Sent '{}' to dial", msg);
 
 }
 
@@ -131,11 +143,38 @@ async fn dial_mode(socket: UdpSocket, addr_relay: SocketAddr, remote_peer_ip: &s
 	    println!("[{}] '{}'",addr_relay, message);
 	};
 
-    // Étape 3 : Test de connexion directe (avant hole punching)
+    // Étape 3 : Test de connexion directe (envoi)
     sleep(Duration::from_secs(1)).await;
-    socket.send_to("Direct connection".as_bytes(), listen_peer_addr).await.unwrap();
+    socket.send_to("IS_HOLE_PUNCHED".as_bytes(), listen_peer_addr).await.unwrap();
     println!("Sent '{}' to relay", msg);
 
-	// Étape 4 : Hole Punching - connect() simultané
-	println!("🔨 Starting HOLE PUNCHING...");
+	// Étape 4 : Test de connexion directe (reception)
+    let timeout_result = timeout(Duration::from_secs(5), async { 
+    	loop {
+	    	// Récupération des messages reçus
+	    	let mut buf = [0; 1024];
+	    	let (size, _) = socket.recv_from(&mut buf).await.expect("Nothing received");
+		    if size <= 0 || size >= 1024  {
+		    	println!("The message's size is incorrect({})", size); 
+		    	return; 
+		    }
+		    let message = String::from_utf8_lossy(&buf[..size]).trim().to_string();
+
+		    // Recherche de l'adresse dans le message du dial
+		    if let Some(addr_sender) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
+		        if let Ok(addr_sender) = addr_sender.parse::<SocketAddr>() {
+		        	if addr_sender == listen_peer_addr {
+		            	println!("[SUCCEED] We can receive messages from {}", listen_peer_addr);
+		            	break;
+		            }
+				    // Affichage du message reçu, si ce n'est pas celui attendu
+				    println!("[{}] {}", addr_sender, message);
+		        }
+		    }
+		}
+	}).await;
+
+	if timeout_result.is_err() {
+		println!("[FAIL] We can not receive messages from {} (timeout)", listen_peer_addr);
+	}
 }
