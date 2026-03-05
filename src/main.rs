@@ -1,4 +1,10 @@
+use std::fmt;
+use tokio::net::UdpSocket;
+use std::net::SocketAddr;
 use clap::{Parser, ValueEnum};
+use serde::{Serialize, Deserialize};
+use chrono::{DateTime, Utc};
+use anyhow::Result;
 mod relay;
 mod client;
 mod nat_detector;
@@ -29,6 +35,14 @@ enum Mode {
     Relay,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+	pub src: SocketAddr,
+	pub dst: SocketAddr,
+	pub txt: String,
+	pub time: u64,
+}
+
 
 #[tokio::main]
 async fn main() {
@@ -38,5 +52,42 @@ async fn main() {
     match opts.mode {
         Mode::Relay => relay::main_relay().await,
         Mode::Listen | Mode::Dial => client::main_client(opts.clone()).await,
+    }
+}
+
+#[async_trait::async_trait]
+pub trait UdpSocketExt {
+    async fn send_msg(&self, msg: &Message) -> Result<usize>;
+    async fn send_txt(&self, src: SocketAddr, dst: SocketAddr, txt: &str) -> Result<usize>;
+}
+
+#[async_trait::async_trait]
+impl UdpSocketExt for UdpSocket {
+    async fn send_msg(&self, msg: &Message) -> Result<usize> {
+        let encoded = bincode::serialize(&msg)?;
+        Ok(self.send_to(&encoded, msg.dst).await?)
+    }
+
+    async fn send_txt(&self, src: SocketAddr, dst: SocketAddr, txt: &str) -> Result<usize> {
+        let msg = Message {
+            src,
+            dst,
+            txt: txt.to_string(),
+            time: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        };
+    	self.send_msg(&msg).await
+    }
+}
+
+impl fmt::Display for Message {  // Pour pouvoir faire print("{}", msg) avec un affichage formatté
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(dt) = DateTime::<Utc>::from_timestamp(self.time as i64, 0) {
+            write!(f, "[{}→{}] \"{}\" ({})", self.src, self.dst, self.txt, dt.format("%H:%M:%S"))
+        } else { // On affiche le timestamp brut s'il y a un problème de conversion
+            write!(f, "[{}→{}] \"{}\" (t={})", self.src, self.dst, self.txt, self.time)
+        }
     }
 }

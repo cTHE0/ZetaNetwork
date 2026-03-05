@@ -2,6 +2,8 @@ use tokio::net::UdpSocket;
 use tokio::time::{sleep, Duration, timeout};
 use std::net::SocketAddr;
 use crate::{Opts, Mode};
+use crate::UdpSocketExt;
+use crate::Message;
 
 use crate::nat_detector::nat_detector;
 
@@ -18,8 +20,7 @@ pub async fn main_client(opts: Opts) {
     let port_relay = opts.relay_port.expect("--relay-port est requis");
     let addr_relay = format!("{}:{}", ip_relay, port_relay).parse().expect("Wrong address format");
     let socket = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
-    let message = format!("[{}] HELLO_RELAY", public_addr);
-    let _ = socket.send_to(message.as_bytes(), &addr_relay).await;
+    let _ = socket.send_txt(public_addr, addr_relay, "HELLO_RELAY").await;
 
     println!("\n\n## Let's create direct connection with other peers ##");
     match opts.mode {
@@ -45,34 +46,25 @@ async fn listen_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Soc
     let dial_peer_addr: SocketAddr = loop {
     	// Récupération des message reçu
     	let mut buf = [0; 1024];
-    	let (size, peer_addr) = socket.recv_from(&mut buf).await.expect("Nothing received");
+    	let (size, _) = socket.recv_from(&mut buf).await.expect("Nothing received");
 	    if size <= 0 || size >= 1024  {
 	    	println!("The message's size is incorrect({})", size); 
 	    	return; 
 	    }
-	    let message = String::from_utf8_lossy(&buf[..size]).trim().to_string();
-
-	    // Recherche de l'adresse dans le message du dial
-	    if let Some(addr_str) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
-	        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-	            println!("Received dial peer address: {}", addr);
-	            break addr;
-	        }
-	    }
-
-	    // Affichage du message reçu, si ce n'est pas celui attendu
-	    println!("[{}] {}", peer_addr, message);
+	    let msg: Message = bincode::deserialize(&buf[..size]).expect("[ERROR] Deserialization failed");
+	    println!("Received dial peer address:\n    {}", msg);
+	    break msg.src;
 	};
 
     // Étape 2 : Annoncer au relai qu'on est prêt à recevoir
-    let msg = format!("[{}] LISTEN_READY:{}", public_addr, dial_peer_addr);
-    let _ = socket.send_to(msg.as_bytes(), addr_relay).await.unwrap();
+    let msg = format!("LISTEN_READY:{}", dial_peer_addr);
+    let _ = socket.send_txt(public_addr, addr_relay, &msg).await.unwrap();
     println!("Sent '{}' to relay", msg);
     
     // Étape 3 : Hole Punching (envoyer un message au DIAL même s'il va 
     // certainement être intercepté par le NAT de ce dernier)
-    let msg = format!("[{}] PUNCHING_THE_HOLE:{}", public_addr, dial_peer_addr);
-    let _ = socket.send_to(msg.as_bytes(), dial_peer_addr).await.unwrap();
+    let msg = format!("PUNCHING_THE_HOLE:{}", dial_peer_addr);
+    let _ = socket.send_txt(public_addr, dial_peer_addr, &msg).await.unwrap();
     println!("Sent '{}' to dial", msg);
     
     // Étape 4 : Test de connexion directe (reception)
@@ -85,19 +77,14 @@ async fn listen_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Soc
 		    	println!("The message's size is incorrect({})", size); 
 		    	return; 
 		    }
-		    let message = String::from_utf8_lossy(&buf[..size]).trim().to_string();
+	    	let msg: Message = bincode::deserialize(&buf[..size]).expect("[ERROR] Deserialization failed");
 
-		    // Recherche de l'adresse dans le message du dial
-		    if let Some(addr_sender) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
-		        if let Ok(addr_sender) = addr_sender.parse::<SocketAddr>() {
-		        	if addr_sender == dial_peer_addr {
-		            	println!("[SUCCEED] We can receive messages from {}", dial_peer_addr);
-		            	break;
-		            }
-				    // Affichage du message reçu, si ce n'est pas celui attendu
-				    println!("[{}] {}", addr_sender, message);
-		        }
-		    }
+        	if msg.src == dial_peer_addr {  // Est-ce le dial ?
+            	println!("[SUCCEED] We can receive messages from {}", dial_peer_addr);
+            	break;
+            }
+		    // Sinon, affichage du message reçu
+		    println!("{}", msg);
 		}
 	}).await;
 
@@ -107,8 +94,8 @@ async fn listen_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Soc
 
 	// Étape 5 : Test de connexion directe (envoi)
     sleep(Duration::from_secs(3)).await;
-    let msg = format!("[{}] HELLO_DIAL_FROM_LISTEN:{}", public_addr, dial_peer_addr);
-    let _ = socket.send_to(msg.as_bytes(), dial_peer_addr).await.unwrap();
+    let msg = format!("HELLO_DIAL_FROM_LISTEN:{}", dial_peer_addr);
+    let _ = socket.send_txt(public_addr, dial_peer_addr, &msg).await.unwrap();
     println!("Sent '{}' to dial", msg);
 
 }
@@ -117,8 +104,8 @@ async fn listen_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Soc
 async fn dial_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: SocketAddr, remote_peer_ip: &str, remote_peer_port: &str) {
     // Étape 1 : Demander au relai de nous connecter au peer Listen
     println!("\nInitiating connection to {}:{} (DIAL MODE)...", remote_peer_ip, remote_peer_port);
-    let msg = format!("[{}] DIAL_REQUEST:{}:{}", public_addr, remote_peer_ip, remote_peer_port);
-    let _ = socket.send_to(msg.as_bytes(), addr_relay).await.unwrap();
+    let msg = format!("DIAL_REQUEST:{}:{}", remote_peer_ip, remote_peer_port);
+    let _ = socket.send_txt(public_addr, addr_relay, &msg).await.unwrap();
     println!("Sent '{}' to relay", msg);
     
     // Étape 2 : Recevoir l'adresse du peer Listen via le relai
@@ -130,24 +117,15 @@ async fn dial_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Socke
 	    	println!("The message's size is incorrect({})", size); 
 	    	return; 
 	    }
-	    let message = String::from_utf8_lossy(&buf[..size]).trim().to_string();
-
-	    // Recherche de l'adresse dans le message du dial
-	    if let Some(addr_str) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
-	        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-	            println!("Received listen peer address: {}", addr);
-	            break addr;
-	        }
-	    }
-
-	    // Affichage du message reçu, si ce n'est pas celui attendu
-	    println!("[{}] '{}'",addr_relay, message);
+	    let msg: Message = bincode::deserialize(&buf[..size]).expect("[ERROR] Deserialization failed");
+	    println!("Received listen peer address:\n    {}", msg);
+	    break msg.src;
 	};
 
     // Étape 3 : Test de connexion directe (envoi)
     sleep(Duration::from_secs(1)).await;
-    let msg = format!("[{}] IS_HOLE_PUNCHED", public_addr);
-    socket.send_to(msg.as_bytes(), listen_peer_addr).await.unwrap();
+    let msg = format!("IS_HOLE_PUNCHED");
+    socket.send_txt(public_addr, listen_peer_addr, &msg).await.unwrap();
     println!("Sent 'IS_HOLE_PUNCHED' to relay");
 
 	// Étape 4 : Test de connexion directe (reception)
@@ -160,20 +138,14 @@ async fn dial_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Socke
 		    	println!("The message's size is incorrect({})", size); 
 		    	return; 
 		    }
-		    let message = String::from_utf8_lossy(&buf[..size]).trim().to_string();
-	    	println!("Message received: '{}'", message);
+	    	let msg: Message = bincode::deserialize(&buf[..size]).expect("[ERROR] Deserialization failed");
 
-		    // Recherche de l'adresse dans le message du dial
-		    if let Some(addr_sender) = message.split('[').nth(1).and_then(|s| s.split(']').next()) {
-		        if let Ok(addr_sender) = addr_sender.parse::<SocketAddr>() {
-		        	if addr_sender == listen_peer_addr {
-		            	println!("[SUCCEED] We can receive messages from {}", listen_peer_addr);
-		            	break;
-		            }
-				    // Affichage du message reçu, si ce n'est pas celui attendu
-				    println!("[{}] {}", addr_sender, message);
-		        }
-		    }
+        	if msg.src == listen_peer_addr {  // Est-ce le dial ?
+            	println!("[SUCCEED] We can receive messages from {}", listen_peer_addr);
+            	break;
+            }
+		    // Sinon, affichage du message reçu
+		    println!("{}", msg);
 		}
 	}).await;
 
