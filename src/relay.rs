@@ -25,7 +25,7 @@ pub async fn main_relay() {
             Ok((size, peer_addr)) => {
                 // Affichage du message
                 let message = String::from_utf8_lossy(&buf[..size]).trim().to_string();
-                println!("MESSAGE:'{}'", message);
+                println!("{}", message);
 
                 // Ajout du client dans le repertoire
                 let connected_peers_clone = Arc::clone(&peers_list);
