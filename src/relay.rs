@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use crate::Message;
 use crate::UdpSocketExt;
+use crate::nat_detector::nat_detector;
 
 type PeersMap = Arc<Mutex<HashMap<SocketAddr, u64>>>; // un noeud = [Addr, date dernière connection en sec]
 
@@ -59,7 +60,7 @@ async fn relay_message(peers: &PeersMap, sender_addr: SocketAddr, msg: Message, 
 
     for (other_addr, _) in peers_map.iter_mut() {
         if other_addr != &sender_addr {
-            if let Err(e) = socket.send_msg(&msg).await {
+            if let Err(e) = socket.send_msg(&msg, *other_addr).await {
                 eprintln!("Failed to send to {}: {}", other_addr, e);
             } else {
                 println!("	Relayed to {}", other_addr);
