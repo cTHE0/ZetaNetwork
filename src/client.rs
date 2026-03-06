@@ -20,7 +20,7 @@ pub async fn main_client(opts: Opts) {
     let port_relay = opts.relay_port.expect("--relay-port est requis");
     let addr_relay = format!("{}:{}", ip_relay, port_relay).parse().expect("Wrong address format");
     let socket = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
-    let _ = socket.send_txt(public_addr, addr_relay, "HELLO_RELAY").await;
+    let _ = socket.send_txt(public_addr, addr_relay, "HELLO_RELAY", addr_relay).await;
 
     println!("\n\n## Let's create direct connection with other peers ##");
     match opts.mode {
@@ -58,13 +58,13 @@ async fn listen_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Soc
 
     // Étape 2 : Annoncer au relai qu'on est prêt à recevoir
     let msg = format!("LISTEN_READY:{}", dial_peer_addr);
-    let _ = socket.send_txt(public_addr, addr_relay, &msg).await.unwrap();
+    let _ = socket.send_txt(public_addr, addr_relay, &msg, addr_relay).await.unwrap();
     println!("Sent '{}' to relay", msg);
     
     // Étape 3 : Hole Punching (envoyer un message au DIAL même s'il va 
     // certainement être intercepté par le NAT de ce dernier)
     let msg = format!("PUNCHING_THE_HOLE:{}", dial_peer_addr);
-    let _ = socket.send_txt(public_addr, dial_peer_addr, &msg).await.unwrap();
+    let _ = socket.send_txt(public_addr, dial_peer_addr, &msg, dial_peer_addr).await.unwrap();
     println!("Sent '{}' to dial", msg);
     
     // Étape 4 : Test de connexion directe (reception)
@@ -95,7 +95,7 @@ async fn listen_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Soc
 	// Étape 5 : Test de connexion directe (envoi)
     sleep(Duration::from_secs(3)).await;
     let msg = format!("HELLO_DIAL_FROM_LISTEN:{}", dial_peer_addr);
-    let _ = socket.send_txt(public_addr, dial_peer_addr, &msg).await.unwrap();
+    let _ = socket.send_txt(public_addr, dial_peer_addr, &msg, dial_peer_addr).await.unwrap();
     println!("Sent '{}' to dial", msg);
 
 }
@@ -105,7 +105,7 @@ async fn dial_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Socke
     // Étape 1 : Demander au relai de nous connecter au peer Listen
     println!("\nInitiating connection to {}:{} (DIAL MODE)...", remote_peer_ip, remote_peer_port);
     let msg = format!("DIAL_REQUEST:{}:{}", remote_peer_ip, remote_peer_port);
-    let _ = socket.send_txt(public_addr, addr_relay, &msg).await.unwrap();
+    let _ = socket.send_txt(public_addr, addr_relay, &msg, addr_relay).await.unwrap();
     println!("Sent '{}' to relay", msg);
     
     // Étape 2 : Recevoir l'adresse du peer Listen via le relai
@@ -125,7 +125,7 @@ async fn dial_mode(socket: UdpSocket, addr_relay: SocketAddr, public_addr: Socke
     // Étape 3 : Test de connexion directe (envoi)
     sleep(Duration::from_secs(1)).await;
     let msg = format!("IS_HOLE_PUNCHED");
-    socket.send_txt(public_addr, listen_peer_addr, &msg).await.unwrap();
+    socket.send_txt(public_addr, listen_peer_addr, &msg, listen_peer_addr).await.unwrap();
     println!("Sent 'IS_HOLE_PUNCHED' to relay");
 
 	// Étape 4 : Test de connexion directe (reception)

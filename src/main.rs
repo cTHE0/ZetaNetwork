@@ -57,18 +57,18 @@ async fn main() {
 
 #[async_trait::async_trait]
 pub trait UdpSocketExt {
-    async fn send_msg(&self, msg: &Message) -> Result<usize>;
-    async fn send_txt(&self, src: SocketAddr, dst: SocketAddr, txt: &str) -> Result<usize>;
+    async fn send_msg(&self, msg: &Message, next_hop: SocketAddr) -> Result<usize>;
+    async fn send_txt(&self, src: SocketAddr, dst: SocketAddr, txt: &str, next_hop: SocketAddr) -> Result<usize>;
 }
 
 #[async_trait::async_trait]
 impl UdpSocketExt for UdpSocket {
-    async fn send_msg(&self, msg: &Message) -> Result<usize> {
+    async fn send_msg(&self, msg: &Message, next_hop: SocketAddr) -> Result<usize> {
         let encoded = bincode::serialize(&msg)?;
-        Ok(self.send_to(&encoded, msg.dst).await?)
+        Ok(self.send_to(&encoded, next_hop).await?)
     }
 
-    async fn send_txt(&self, src: SocketAddr, dst: SocketAddr, txt: &str) -> Result<usize> {
+    async fn send_txt(&self, src: SocketAddr, dst: SocketAddr, txt: &str, next_hop: SocketAddr) -> Result<usize> {
         let msg = Message {
             src,
             dst,
@@ -78,7 +78,7 @@ impl UdpSocketExt for UdpSocket {
                 .unwrap()
                 .as_secs(),
         };
-    	self.send_msg(&msg).await
+    	self.send_msg(&msg, next_hop).await
     }
 }
 

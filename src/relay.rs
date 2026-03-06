@@ -12,6 +12,12 @@ use crate::UdpSocketExt;
 type PeersMap = Arc<Mutex<HashMap<SocketAddr, u64>>>; // un noeud = [Addr, date dernière connection en sec]
 
 pub async fn main_relay() {
+	// Description de ce noeud
+	println!("\nLooking for NAT type and public IP address...");
+	let (nat_type, public_addr) = nat_detector().await
+		.expect("[ERROR] NAT type not detected");
+    println!("   -> {:?}\n   -> {}", nat_type, public_addr);
+
     // Le relay démarre l'écoute
     let port_relay = 12345;
     let addr_relay = format!("0.0.0.0:{}", port_relay);
@@ -39,7 +45,9 @@ pub async fn main_relay() {
                     .as_secs();
                 connected_peers_clone.lock().await.insert(peer_addr, now);
 
-                relay_message(&connected_peers_clone, peer_addr, msg, &socket_relay).await;
+                if public_addr != msg.dst {
+                	relay_message(&connected_peers_clone, peer_addr, msg, &socket_relay).await;
+               	}
             }
             Err(e) => eprintln!("[ERROR]: a message contain an error ({})", e),
         }
