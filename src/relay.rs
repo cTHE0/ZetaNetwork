@@ -65,12 +65,13 @@ pub async fn main_relay() {
                 if let Message::AskForAddr { src_addr, peer_id, .. } = &msg {
                 	let map = connected_peers_clone.lock().await;  // lock d'abord
 				    if let Some((found_addr, _)) = map.iter().find(|(_, (id, _))| id == peer_id) {
-				        let reply = Message::PeerInfo {
+				        let msg = Message::PeerInfo {
 				            peer_addr: *found_addr,
 				            peer_id: peer_id.clone(),
 				        };
 				        drop(map);  // libère le lock avant le send
-				        let _ = socket.send_msg(&reply, *src_addr).await;
+				        let _ = socket.send_msg(&msg, *src_addr).await;
+                		println!("{}", msg);
 				    } else {
 				        eprintln!("Peer {} not found", peer_id);
 				    }
