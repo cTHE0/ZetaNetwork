@@ -4,12 +4,11 @@ use tokio::time::{Duration, sleep};
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{Message, UdpSocketExt, get_public_ip};
 use crate::nat_detector::nat_detector;
+use crate::lib_p2p::*;
 
-type PeersMap = Arc<Mutex<HashMap<SocketAddr, (String, u64)>>>; // un noeud = [Addr, date dernière connection en sec]
+type PeersMap = Arc<Mutex<HashMap<SocketAddr, (String, u64)>>>; // un noeud = [Addr, (pseudo, derniere connection en secs)]
 
 pub async fn main_relay() {
 	// Description de ce noeud
@@ -110,12 +109,8 @@ async fn relay_message(peers: &PeersMap, sender_addr: SocketAddr, msg: Message, 
 
 async fn delete_disconnected_peers(peers: &PeersMap) {
     let mut peers_map = peers.lock().await;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_secs();
     peers_map.retain(|addr, (_, last_seen)| {
-        let active = now - *last_seen < 60;
+        let active = now_secs() - *last_seen < 60;
         if !active { println!("[INFO] Peer {} disconnected (timeout)", addr); }
         active
     });

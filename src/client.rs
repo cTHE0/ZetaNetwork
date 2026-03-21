@@ -1,11 +1,9 @@
 use tokio::net::UdpSocket;
 use tokio::time::{sleep, Duration, timeout};
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::time::{SystemTime, UNIX_EPOCH};
-use crate::{Opts, Mode};
-use crate::{Message, UdpSocketExt, get_public_ip, recv_msg};
 
 use crate::nat_detector::nat_detector;
+use crate::lib_p2p::*;
 
 
 pub async fn main_client(opts: Opts) {
@@ -28,7 +26,7 @@ pub async fn main_client(opts: Opts) {
         src_id: peer_id.clone(),
         dst_addr: relay_addr,
         dst_id: "relay1".to_string(),
-        time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs(),
+        time: now_secs(),
     };
     let _ = socket.send_msg(&msg, relay_addr).await;
 
@@ -70,7 +68,7 @@ async fn listen_mode(socket: UdpSocket, relay_addr: SocketAddr, public_addr: Soc
         src_id: peer_id.clone(),
         dst_addr: dial_peer_addr,
         dst_id: dial_peer_id.clone(),
-        time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs(),
+        time: now_secs(),
         txt: "Hello dial, I am punching you, sorry".to_string(),
     };
     let _ = socket.send_msg(&msg, dial_peer_addr).await.unwrap();
@@ -82,7 +80,7 @@ async fn listen_mode(socket: UdpSocket, relay_addr: SocketAddr, public_addr: Soc
         dst_addr: dial_peer_addr,
         src_id: peer_id.clone(),
         dst_id: dial_peer_id.clone(),
-        time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs(),
+        time: now_secs(),
         txt: "Hello dial, I am waiting for your direct connection".to_string(),
     };
     let _ = socket.send_msg(&msg, relay_addr).await.unwrap();
@@ -116,12 +114,13 @@ async fn listen_mode(socket: UdpSocket, relay_addr: SocketAddr, public_addr: Soc
         dst_addr: dial_peer_addr,
         src_id: peer_id.clone(),
         dst_id: dial_peer_id.clone(),
-        time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs(),
+        time: now_secs(),
         txt: "Hello dial, it is a direct connection".to_string(),
     };
     let _ = socket.send_msg(&msg, dial_peer_addr).await.unwrap();
     println!("Sent '{}' to dial", msg);
 
+    return;
 }
 
 // ==================== MODE DIAL ====================
@@ -131,7 +130,7 @@ async fn dial_mode(socket: UdpSocket, relay_addr: SocketAddr, public_addr: Socke
     let msg = Message::AskForAddr {
         src_addr: public_addr,
         src_id: peer_id.clone(),
-        time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs(),
+        time: now_secs(),
         peer_id: listen_peer_id.clone(),
     };
     let _ = socket.send_msg(&msg, relay_addr).await.unwrap();
@@ -158,7 +157,7 @@ async fn dial_mode(socket: UdpSocket, relay_addr: SocketAddr, public_addr: Socke
         src_id: peer_id.clone(),
         dst_addr: listen_peer_addr,
         dst_id: listen_peer_id.clone(),
-        time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs(),
+        time: now_secs(),
     };
     let _ = socket.send_msg(&msg, relay_addr).await.unwrap();
     println!("Sent '{}' to relay", msg);
@@ -170,7 +169,7 @@ async fn dial_mode(socket: UdpSocket, relay_addr: SocketAddr, public_addr: Socke
         src_id: peer_id.clone(),
         dst_addr: listen_peer_addr,
         dst_id: listen_peer_id.clone(),
-        time: SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs(),
+        time: now_secs(),
         txt: "Hello listen, it is a direct connection".to_string(),
     };
     socket.send_msg(&msg, listen_peer_addr).await.unwrap();
@@ -196,4 +195,5 @@ async fn dial_mode(socket: UdpSocket, relay_addr: SocketAddr, public_addr: Socke
     if timeout_result.is_err() {
         println!("[FAIL] We can not receive messages from {} (timeout)", listen_peer_addr);
     }
+    return;
 }
