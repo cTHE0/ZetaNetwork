@@ -78,7 +78,15 @@ pub async fn main_hubRelay(peer_id: String, hubRelay_addr: SocketAddr) {
                             let _ = socket.send_msg(&msg, *relay_addr).await;
                             println!("{}", msg);
                         } else {
-                            eprintln!("[WARN] NeedRelay recived but no relay available");
+                            let msg = Message::NoRelayAvailable {
+	                            src_addr: public_addr,
+	                            src_id: "hubRelay".to_string(),
+                                dst_addr: *src_addr,
+                                dst_id: src_id.clone(),
+                            	time: now_secs(),
+                            };
+                            let _ = socket.send_msg(&msg, *src_addr).await;
+                            println!("{}", msg);
                         }
                     }
 

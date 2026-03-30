@@ -17,7 +17,14 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
     let (nat_type, _) = nat_detector().await
         .expect("[ERROR] NAT type not detected");
     println!("   -> {:?}\n", nat_type);  
+
+    // Vérifie l'accès réseau dès le début
+    if matches!(nat_type, Unknown | UdpBlocked) {
+        println!("This node can't access the network ({:?})", nat_type);
+        return;
+    }
     
+    // Crée le socket pour envoyer des messages
     let socket = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
     let public_addr:SocketAddr = get_public_ip(&socket).await
         .expect("Public IP not obtained.");
@@ -33,25 +40,34 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
     let _ = socket.send_msg(&msg, hubRelay_addr).await;  
 
     // Attends l'adresse d'un relais, de la part du hub relais
-    let relay_addr = loop {
-        // Récupération des messages reçu
+    let relay_addr: Option<SocketAddr> = loop {
         let Some((msg, _)) = recv_msg(&socket).await else { return };
-        if let Message::PeerInfo {peer_addr, peer_id, ..} = &msg {
-            println!("Received a relay address {} ({})", *peer_addr, peer_id.clone());
-            break *peer_addr;
+        match &msg {
+            Message::PeerInfo { peer_addr, peer_id, .. } => {
+                println!("Received relay address {} ({})", peer_addr, peer_id);
+                break Some(*peer_addr);
+            }
+            Message::NoRelayAvailable { .. } => {
+                println!("[WARN] No relays available on the network");
+                break None;
+            }
+            _ => println!("Unexpected message: '{}'", msg),
         }
-        println!("'{}'", msg);
     };
 
-    // Envoi du premier message au relai
-    let msg = Message::Register {
-        src_addr: public_addr,
-        src_id: peer_id.clone(),
-        dst_addr: relay_addr,
-        dst_id: "relay1".to_string(),
-        time: now_secs(),
-    };
-    let _ = socket.send_msg(&msg, relay_addr).await;
+    // Envoi du premier message au relais
+    if let Some(relay_addr) = relay_addr {
+        let msg = Message::Register {
+            src_addr: public_addr,
+            src_id: peer_id.clone(),
+            dst_addr: relay_addr,
+            dst_id: "relay1".to_string(),
+            time: now_secs(),
+        };
+        let _ = socket.send_msg(&msg, relay_addr).await;
+    } else {
+        println!("[WARN] No relay, skipping registration");
+    }
 
     // Ajout de ce noeud au réseau Zeta Network
     match nat_type {
@@ -59,13 +75,9 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
             println!("This node is become a relay ({:?})", nat_type);
             user_and_relay(socket, public_addr, peer_id).await;
         }
-        SymmetricUdpFirewall | Symmetric => {
+        _ => {  // SymmetricUdpFirewall or Symmetric
             println!("This node can't be a relay ({:?})", nat_type);
             user_only(socket, public_addr, peer_id).await;
-        }
-        Unknown | UdpBlocked => {
-            println!("This node can't access the network ({:?})", nat_type);
-            return;
         }
     }
 
