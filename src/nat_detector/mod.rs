@@ -5,7 +5,8 @@ use rand::Rng;
 use crate::nat_detector::util::nat_detect_with_servers;
 use crate::nat_detector::util::NatType;
 
-mod util;
+pub mod util;
+
 
 pub async fn nat_detector () -> std::io::Result<(NatType, SocketAddr)> {
 	// Paramètres modifiables

@@ -5,6 +5,11 @@ use clap::{Parser, ValueEnum};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use anyhow::Result;
+use tokio::sync::Mutex;
+use std::sync::Arc;
+use std::collections::HashMap;
+
+pub type PeersMap = Arc<Mutex<HashMap<SocketAddr, (String, u64)>>>; // un noeud = [Addr, (pseudo, derniere connection en secs)]
 
 #[derive(Debug, Parser, Clone)]
 pub struct Opts {
@@ -13,22 +18,13 @@ pub struct Opts {
     pub mode: Mode,
 
     #[arg(long)]
-    pub peer_id: String,
-
-    // Adresse du relai qui va permettre de connecter les noeuds (au moins au début)
-    #[arg(long, required_if_eq_any([("mode", "dial"), ("mode", "listen")]), help("Peers in dial/listen mode require '--relay-addr 1.2.3.4:5678'"))]
-    pub relay_addr: Option<String>,
-
-    // L'adresse du noeud auquel le dial veut se connecter
-    #[arg(long, required_if_eq("mode", "dial"), help("Peers in dial mode require '--listen-peer-d pseudo'"))]
-    pub listen_peer_id: Option<String>,
+    pub peer_id: String
 }
 
 #[derive(Clone, Debug, PartialEq, ValueEnum)]
 pub enum Mode {
-    Dial,
-    Listen,
-    Relay,
+    Client,
+    HubRelay
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +63,23 @@ pub enum Message {
         dst_addr: SocketAddr,
         dst_id: String,
         txt: String,
+        time: u64,
+    },
+
+    BeNewRelay {  // new Relay → Serveur stockant les adresses des relais : "Je me déclare relay"
+        src_addr: SocketAddr,
+        src_id: String,
+        time: u64,
+    },
+
+    NeedRelay {  // new Relay → Serveur stockant les adresses des relais : "Je me déclare relay"
+        src_addr: SocketAddr,
+        src_id: String,
+        time: u64,
+    },
+    Ack {
+        src_addr: SocketAddr,
+        src_id: String,
         time: u64,
     },
 }
@@ -114,6 +127,24 @@ impl fmt::Display for Message {
                     .unwrap_or_else(|| format!("t={}", time));
                 write!(f, "[{} ({}) → {} ({})] \"{}\" ({})", src_addr, src_id, dst_addr, dst_id, txt, time_str)
             }
+            Message::BeNewRelay { src_addr, src_id, time } => {
+                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_else(|| format!("t={}", time));
+                write!(f, "[BeNewRelay] {} ({}) ({})", src_addr, src_id, time_str)
+            }
+            Message::NeedRelay { src_addr, src_id, time } => {
+                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_else(|| format!("t={}", time));
+                write!(f, "[NeedRelay] {} ({}) ({})", src_addr, src_id, time_str)
+            }
+            Message::Ack { src_addr, src_id, time } => {
+                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_else(|| format!("t={}", time));
+                write!(f, "[Ack] {} ({}) ({})", src_addr, src_id, time_str)
+            }
         }
     }
 }
@@ -145,4 +176,27 @@ pub fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_secs()
+}
+
+pub async fn delete_disconnected_peers(peers: &PeersMap) {
+    let mut peers_map = peers.lock().await;
+    peers_map.retain(|addr, (_, last_seen)| {
+        let active = now_secs() - *last_seen < 120;
+        if !active { println!("[INFO] Peer {} disconnected (timeout)", addr); }
+        active
+    });
+}
+
+pub async fn relay_message(peers: &PeersMap, sender_addr: SocketAddr, msg: Message, socket: &UdpSocket) {
+    let mut peers_map = peers.lock().await;
+
+    for (other_addr, _) in peers_map.iter_mut() {
+        if other_addr != &sender_addr {
+            if let Err(e) = socket.send_msg(&msg, *other_addr).await {
+                eprintln!("Failed to send to {}: {}", other_addr, e);
+            } else {
+                println!("    Relayed to {}", other_addr);
+            }
+        }
+    }
 }
