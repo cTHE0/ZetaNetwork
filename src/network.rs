@@ -2,7 +2,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::net::SocketAddr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::lib_p2p::*;
 use crate::post::Post;
@@ -12,15 +12,18 @@ use crate::crypto::KeyPair;
 pub type SharedStorage = Arc<Mutex<Storage>>;
 pub type SharedPeers = Arc<Mutex<HashMap<SocketAddr, (String, u64)>>>;  // addr -> (pubkey, last_seen)
 pub type SharedNetworkNodes = Arc<Mutex<Vec<NetworkNode>>>;  // Liste des nœuds du réseau
+pub type SeenPosts = Arc<Mutex<HashSet<String>>>;  // IDs des posts déjà vus (pour éviter les boucles)
 
 pub struct NetworkState {
     pub socket: Arc<UdpSocket>,
     pub storage: SharedStorage,
     pub peers: SharedPeers,
     pub network_nodes: SharedNetworkNodes,
+    pub seen_posts: SeenPosts,
     pub keypair: KeyPair,
     pub public_addr: SocketAddr,
     pub hub_addr: SocketAddr,
+    pub is_relay: bool,
 }
 
 impl NetworkState {
@@ -30,34 +33,46 @@ impl NetworkState {
         keypair: KeyPair,
         public_addr: SocketAddr,
         hub_addr: SocketAddr,
+        is_relay: bool,
     ) -> Self {
         NetworkState {
             socket: Arc::new(socket),
             storage: Arc::new(Mutex::new(storage)),
             peers: Arc::new(Mutex::new(HashMap::new())),
             network_nodes: Arc::new(Mutex::new(Vec::new())),
+            seen_posts: Arc::new(Mutex::new(HashSet::new())),
             keypair,
             public_addr,
             hub_addr,
+            is_relay,
         }
     }
 
     pub async fn broadcast_post(&self, post: &Post) {
+        // Marquer ce post comme vu pour ne pas le relayer en boucle
+        {
+            let mut seen = self.seen_posts.lock().await;
+            seen.insert(post.id.clone());
+        }
+
         let msg = Message::PublishPost { post: post.clone() };
 
-        // Envoyer au Hub Relay pour qu'il redistribue à tous les nœuds
-        if let Err(e) = self.socket.send_msg(&msg, self.hub_addr).await {
-            eprintln!("[WARN] Failed to send post to hub: {}", e);
-        }
-
-        // Envoyer aussi directement aux peers connus (au cas où)
+        // Envoyer à tous les peers connus (relays + clients)
         let peers = self.peers.lock().await;
         for (addr, _) in peers.iter() {
-            if *addr != self.hub_addr {
-                let _ = self.socket.send_msg(&msg, *addr).await;
+            let _ = self.socket.send_msg(&msg, *addr).await;
+        }
+        drop(peers);
+
+        // Envoyer aussi aux relays connus via la liste du réseau
+        let nodes = self.network_nodes.lock().await;
+        for node in nodes.iter() {
+            if node.is_relay && node.addr != self.public_addr {
+                let _ = self.socket.send_msg(&msg, node.addr).await;
             }
         }
-        println!("[NET] Post diffusé au hub + {} peers", peers.len());
+
+        println!("[NET] Post diffusé aux peers et relays");
     }
 
     pub async fn request_posts_from_peers(&self, since: u64, pubkeys: Vec<String>) {
@@ -67,16 +82,18 @@ impl NetworkState {
             pubkeys,
         };
 
-        // Envoyer au Hub Relay pour qu'il redistribue
-        if let Err(e) = self.socket.send_msg(&msg, self.hub_addr).await {
-            eprintln!("[WARN] Failed to request posts from hub: {}", e);
-        }
-
-        // Envoyer aussi directement aux peers connus
+        // Envoyer aux peers connus
         let peers = self.peers.lock().await;
         for (addr, _) in peers.iter() {
-            if *addr != self.hub_addr {
-                let _ = self.socket.send_msg(&msg, *addr).await;
+            let _ = self.socket.send_msg(&msg, *addr).await;
+        }
+        drop(peers);
+
+        // Envoyer aussi aux relays connus
+        let nodes = self.network_nodes.lock().await;
+        for node in nodes.iter() {
+            if node.is_relay && node.addr != self.public_addr {
+                let _ = self.socket.send_msg(&msg, node.addr).await;
             }
         }
     }
@@ -126,12 +143,47 @@ impl NetworkState {
                     eprintln!("[WARN] Post invalide reçu (signature incorrecte)");
                     return;
                 }
-                // Stocker le post (acceptation automatique pour l'instant)
-                let storage = self.storage.lock().await;
-                if let Err(e) = storage.save_post(&post) {
-                    eprintln!("[ERROR] Failed to save post: {}", e);
+
+                // Vérifier si on a déjà vu ce post (éviter les boucles)
+                let is_new = {
+                    let mut seen = self.seen_posts.lock().await;
+                    seen.insert(post.id.clone())
+                };
+
+                if !is_new {
+                    // Déjà vu, ignorer
+                    return;
+                }
+
+                // Stocker le post
+                {
+                    let storage = self.storage.lock().await;
+                    if let Err(e) = storage.save_post(&post) {
+                        eprintln!("[ERROR] Failed to save post: {}", e);
+                    }
                 }
                 println!("[NET] Post stocké: {}", post);
+
+                // Si on est un relay, propager aux autres peers (sauf l'expéditeur)
+                if self.is_relay {
+                    let relay_msg = Message::PublishPost { post };
+                    let peers = self.peers.lock().await;
+                    for (addr, _) in peers.iter() {
+                        if *addr != sender_addr {
+                            let _ = self.socket.send_msg(&relay_msg, *addr).await;
+                        }
+                    }
+                    drop(peers);
+
+                    // Propager aussi aux autres relays
+                    let nodes = self.network_nodes.lock().await;
+                    for node in nodes.iter() {
+                        if node.is_relay && node.addr != self.public_addr && node.addr != sender_addr {
+                            let _ = self.socket.send_msg(&relay_msg, node.addr).await;
+                        }
+                    }
+                    println!("[RELAY] Post propagé aux autres nœuds");
+                }
             }
 
             Message::RequestPosts { src_addr, since, pubkeys } => {

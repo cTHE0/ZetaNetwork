@@ -171,48 +171,6 @@ pub async fn main_hubRelay(peer_id: String, hubRelay_addr: SocketAddr) {
                         println!("{}", msg);
                     }
 
-                    // Relayer un post à tous les nœuds du réseau
-                    Message::PublishPost { post } => {
-                        // Vérifier la signature avant de relayer
-                        if !post.verify() {
-                            eprintln!("[WARN] Post invalide reçu, non relayé");
-                            continue;
-                        }
-
-                        let nodes = nodes_list.lock().await;
-                        let recipients: Vec<SocketAddr> = nodes.iter()
-                            .filter(|(addr, _)| **addr != sender_addr)  // Ne pas renvoyer à l'expéditeur
-                            .map(|(addr, _)| *addr)
-                            .collect();
-                        drop(nodes);
-
-                        println!("[RELAY] Relaying post from {} to {} nodes", sender_addr, recipients.len());
-                        for addr in recipients {
-                            let _ = socket.send_msg(&msg, addr).await;
-                        }
-                    }
-
-                    // Relayer une demande de posts
-                    Message::RequestPosts { src_addr, .. } => {
-                        let nodes = nodes_list.lock().await;
-                        let recipients: Vec<SocketAddr> = nodes.iter()
-                            .filter(|(addr, _)| **addr != *src_addr)
-                            .map(|(addr, _)| *addr)
-                            .collect();
-                        drop(nodes);
-
-                        println!("[RELAY] Relaying RequestPosts from {} to {} nodes", src_addr, recipients.len());
-                        for addr in recipients {
-                            let _ = socket.send_msg(&msg, addr).await;
-                        }
-                    }
-
-                    // Relayer un batch de posts
-                    Message::PostsBatch { .. } => {
-                        // Envoyer au demandeur original (via sender_addr déjà géré par UDP)
-                        // Pas de relai nécessaire, réponse directe
-                    }
-
                     _ => {
                         // Met à jour le last_seen si on reçoit un message d'un noeud connu
                         let mut nodes = nodes_list.lock().await;

@@ -62,8 +62,11 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
         }
     };
 
+    // Déterminer si ce nœud peut être un relay
+    let is_relay = matches!(nat_type, OpenInternet | FullCone | RestrictedCone | PortRestrictedCone);
+
     // Créer le NetworkState
-    let network = Arc::new(NetworkState::new(socket, storage, keypair, public_addr, hubRelay_addr));
+    let network = Arc::new(NetworkState::new(socket, storage, keypair, public_addr, hubRelay_addr, is_relay));
 
     // Enregistrer auprès du relay si disponible
     if let Some(relay_addr) = relay_addr {
@@ -81,20 +84,17 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
     }
 
     // Ajout de ce noeud au réseau Zeta Network
-    match nat_type {
-        OpenInternet | FullCone | RestrictedCone | PortRestrictedCone => {
-            println!("This node can be a relay ({:?})", nat_type);
-            // S'annoncer comme relay au HubRelay
-            let msg = Message::BeNewRelay {
-                src_addr: public_addr,
-                src_id: peer_id.clone(),
-                time: now_secs(),
-            };
-            let _ = network.socket.send_msg(&msg, hubRelay_addr).await;
-        }
-        _ => {
-            println!("This node can't be a relay ({:?})", nat_type);
-        }
+    if is_relay {
+        println!("This node is a RELAY ({:?}) - will propagate messages", nat_type);
+        // S'annoncer comme relay au HubRelay
+        let msg = Message::BeNewRelay {
+            src_addr: public_addr,
+            src_id: peer_id.clone(),
+            time: now_secs(),
+        };
+        let _ = network.socket.send_msg(&msg, hubRelay_addr).await;
+    } else {
+        println!("This node is a CLIENT ({:?}) - won't propagate messages", nat_type);
     }
 
     // Démarrer les services en parallèle
