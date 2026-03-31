@@ -132,6 +132,23 @@ pub enum Message {
     PeersList {  // Liste des peers connus
         peers: Vec<(SocketAddr, String)>,  // (addr, pubkey)
     },
+
+    GetAllNodes {  // Demande la liste de tous les nœuds du réseau au Hub
+        src_addr: SocketAddr,
+        time: u64,
+    },
+
+    AllNodesList {  // Liste complète des nœuds du réseau
+        nodes: Vec<NetworkNode>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkNode {
+    pub addr: SocketAddr,
+    pub pubkey: String,
+    pub is_relay: bool,
+    pub last_seen: u64,
 }
 
 #[async_trait::async_trait]
@@ -232,6 +249,16 @@ impl fmt::Display for Message {
             }
             Message::PeersList { peers } => {
                 write!(f, "[PeersList] {} peers", peers.len())
+            }
+            Message::GetAllNodes { src_addr, time } => {
+                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_else(|| format!("t={}", time));
+                write!(f, "[GetAllNodes] {} ({})", src_addr, time_str)
+            }
+            Message::AllNodesList { nodes } => {
+                let relays = nodes.iter().filter(|n| n.is_relay).count();
+                write!(f, "[AllNodesList] {} nodes ({} relays)", nodes.len(), relays)
             }
         }
     }

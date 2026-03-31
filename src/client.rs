@@ -63,7 +63,7 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
     };
 
     // Créer le NetworkState
-    let network = Arc::new(NetworkState::new(socket, storage, keypair, public_addr));
+    let network = Arc::new(NetworkState::new(socket, storage, keypair, public_addr, hubRelay_addr));
 
     // Enregistrer auprès du relay si disponible
     if let Some(relay_addr) = relay_addr {
@@ -144,6 +144,15 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
                 time: now_secs(),
             };
             let _ = network_announce.socket.send_msg(&msg, hubRelay_addr_clone).await;
+        }
+    });
+
+    // Service de récupération périodique des nœuds du réseau
+    let network_nodes = Arc::clone(&network);
+    tokio::spawn(async move {
+        loop {
+            network_nodes.request_network_nodes().await;
+            sleep(Duration::from_secs(30)).await;
         }
     });
 

@@ -175,6 +175,43 @@
         .peer-addr { color: #1da1f2; font-weight: bold; }
         .peer-info { color: #8899a6; font-size: 12px; margin-top: 5px; }
 
+        /* Network nodes */
+        .node-item {
+            background: #192734;
+            padding: 12px 15px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .node-info { flex: 1; }
+        .node-addr { color: #1da1f2; font-weight: bold; font-size: 14px; }
+        .node-pubkey {
+            font-family: monospace;
+            font-size: 11px;
+            color: #8899a6;
+            margin-top: 4px;
+            word-break: break-all;
+        }
+        .node-meta { color: #8899a6; font-size: 12px; margin-top: 4px; }
+        .node-badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .badge-relay { background: #00ba7c; color: white; }
+        .badge-client { background: #f4a51a; color: #15202b; }
+        .btn-follow {
+            background: #38444d;
+            margin-left: 10px;
+            white-space: nowrap;
+        }
+        .btn-follow:hover { background: #1da1f2; }
+        .btn-follow.following { background: #00ba7c; }
+
         .empty-state {
             text-align: center;
             color: #8899a6;
@@ -192,6 +229,7 @@
 
         <div class="tabs">
             <button class="tab active" data-panel="timeline">Timeline</button>
+            <button class="tab" data-panel="network">Reseau</button>
             <button class="tab" data-panel="identity">Mon Identite</button>
             <button class="tab" data-panel="subscriptions">Abonnements</button>
             <button class="tab" data-panel="peers">Peers</button>
@@ -207,6 +245,28 @@
                 </div>
             </div>
             <div id="posts-list" class="loading">Chargement...</div>
+        </div>
+
+        <!-- Network Panel -->
+        <div id="network" class="panel">
+            <div class="network-stats" style="background: #192734; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-around; text-align: center;">
+                    <div>
+                        <div id="total-nodes" style="font-size: 24px; color: #1da1f2;">0</div>
+                        <div style="color: #8899a6; font-size: 12px;">Noeuds</div>
+                    </div>
+                    <div>
+                        <div id="total-relays" style="font-size: 24px; color: #00ba7c;">0</div>
+                        <div style="color: #8899a6; font-size: 12px;">Relays</div>
+                    </div>
+                    <div>
+                        <div id="total-clients" style="font-size: 24px; color: #f4a51a;">0</div>
+                        <div style="color: #8899a6; font-size: 12px;">Clients</div>
+                    </div>
+                </div>
+            </div>
+            <h3 style="color: #8899a6; margin-bottom: 15px; font-size: 14px;">Tous les noeuds du reseau</h3>
+            <div id="network-list" class="loading">Chargement...</div>
         </div>
 
         <!-- Identity Panel -->
@@ -412,6 +472,81 @@
             }
         }
 
+        // Network nodes
+        let mySubscriptions = [];
+
+        async function loadNetworkNodes() {
+            const container = document.getElementById('network-list');
+            try {
+                // Charger les abonnements pour savoir qui on suit deja
+                const subsRes = await fetch(API + '/api/subscriptions');
+                const subsData = await subsRes.json();
+                if (subsData.success) {
+                    mySubscriptions = subsData.data;
+                }
+
+                const res = await fetch(API + '/api/network');
+                const data = await res.json();
+                if (data.success && data.data.length > 0) {
+                    const nodes = data.data;
+                    const relays = nodes.filter(n => n.is_relay).length;
+                    const clients = nodes.length - relays;
+
+                    document.getElementById('total-nodes').textContent = nodes.length;
+                    document.getElementById('total-relays').textContent = relays;
+                    document.getElementById('total-clients').textContent = clients;
+
+                    container.innerHTML = nodes.map(node => {
+                        const isFollowing = mySubscriptions.includes(node.pubkey);
+                        return `
+                        <div class="node-item">
+                            <div class="node-info">
+                                <div>
+                                    <span class="node-addr">${node.addr}</span>
+                                    <span class="node-badge ${node.is_relay ? 'badge-relay' : 'badge-client'}">
+                                        ${node.is_relay ? 'RELAY' : 'CLIENT'}
+                                    </span>
+                                </div>
+                                <div class="node-pubkey">${node.pubkey}</div>
+                                <div class="node-meta">Vu: ${formatTime(node.last_seen)}</div>
+                            </div>
+                            <button class="btn btn-small btn-follow ${isFollowing ? 'following' : ''}"
+                                    onclick="followNode('${node.pubkey}')"
+                                    ${isFollowing ? 'disabled' : ''}>
+                                ${isFollowing ? 'Suivi' : 'Suivre'}
+                            </button>
+                        </div>
+                    `}).join('');
+                } else {
+                    document.getElementById('total-nodes').textContent = '0';
+                    document.getElementById('total-relays').textContent = '0';
+                    document.getElementById('total-clients').textContent = '0';
+                    container.innerHTML = '<div class="empty-state">Aucun noeud sur le reseau</div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
+            }
+        }
+
+        async function followNode(pubkey) {
+            try {
+                const res = await fetch(API + '/api/subscriptions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pubkey })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    loadNetworkNodes();
+                    loadSubscriptions();
+                } else {
+                    alert('Erreur: ' + data.error);
+                }
+            } catch (e) {
+                alert('Erreur reseau');
+            }
+        }
+
         // Utils
         function formatTime(timestamp) {
             const date = new Date(timestamp * 1000);
@@ -429,10 +564,12 @@
         loadIdentity();
         loadSubscriptions();
         loadPeers();
+        loadNetworkNodes();
 
         // Auto-refresh posts every 30s
         setInterval(loadPosts, 30000);
         setInterval(loadPeers, 60000);
+        setInterval(loadNetworkNodes, 30000);
     </script>
 </body>
 </html>

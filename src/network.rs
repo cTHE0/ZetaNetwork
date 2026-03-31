@@ -11,13 +11,16 @@ use crate::crypto::KeyPair;
 
 pub type SharedStorage = Arc<Mutex<Storage>>;
 pub type SharedPeers = Arc<Mutex<HashMap<SocketAddr, (String, u64)>>>;  // addr -> (pubkey, last_seen)
+pub type SharedNetworkNodes = Arc<Mutex<Vec<NetworkNode>>>;  // Liste des nœuds du réseau
 
 pub struct NetworkState {
     pub socket: Arc<UdpSocket>,
     pub storage: SharedStorage,
     pub peers: SharedPeers,
+    pub network_nodes: SharedNetworkNodes,
     pub keypair: KeyPair,
     pub public_addr: SocketAddr,
+    pub hub_addr: SocketAddr,
 }
 
 impl NetworkState {
@@ -26,13 +29,16 @@ impl NetworkState {
         storage: Storage,
         keypair: KeyPair,
         public_addr: SocketAddr,
+        hub_addr: SocketAddr,
     ) -> Self {
         NetworkState {
             socket: Arc::new(socket),
             storage: Arc::new(Mutex::new(storage)),
             peers: Arc::new(Mutex::new(HashMap::new())),
+            network_nodes: Arc::new(Mutex::new(Vec::new())),
             keypair,
             public_addr,
+            hub_addr,
         }
     }
 
@@ -71,6 +77,20 @@ impl NetworkState {
         for (addr, _) in peers.iter() {
             let _ = self.socket.send_msg(&msg, *addr).await;
         }
+    }
+
+    pub async fn request_network_nodes(&self) {
+        let msg = Message::GetAllNodes {
+            src_addr: self.public_addr,
+            time: now_secs(),
+        };
+        if let Err(e) = self.socket.send_msg(&msg, self.hub_addr).await {
+            eprintln!("[WARN] Failed to request network nodes: {}", e);
+        }
+    }
+
+    pub async fn get_network_nodes(&self) -> Vec<NetworkNode> {
+        self.network_nodes.lock().await.clone()
     }
 
     pub async fn add_peer(&self, addr: SocketAddr, pubkey: String) {
@@ -158,6 +178,12 @@ impl NetworkState {
                         self.add_peer(addr, pubkey).await;
                     }
                 }
+            }
+
+            Message::AllNodesList { nodes } => {
+                let mut network_nodes = self.network_nodes.lock().await;
+                *network_nodes = nodes;
+                println!("[NET] Liste des nœuds mise à jour ({} nœuds)", network_nodes.len());
             }
 
             Message::Register { src_addr, src_id, time, .. } => {

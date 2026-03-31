@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::post::Post;
 use crate::network::NetworkState;
+use crate::lib_p2p::NetworkNode;
 
 pub struct AppState {
     pub network: Arc<NetworkState>,
@@ -85,6 +86,14 @@ pub struct PeerResponse {
     last_seen: u64,
 }
 
+#[derive(Serialize)]
+pub struct NetworkNodeResponse {
+    addr: String,
+    pubkey: String,
+    is_relay: bool,
+    last_seen: u64,
+}
+
 pub async fn start_web_server(network: Arc<NetworkState>, port: u16) {
     let state = Arc::new(AppState { network });
 
@@ -97,6 +106,7 @@ pub async fn start_web_server(network: Arc<NetworkState>, port: u16) {
         .route("/api/subscriptions", post(add_subscription))
         .route("/api/subscriptions/{pubkey}", delete(remove_subscription))
         .route("/api/peers", get(get_peers))
+        .route("/api/network", get(get_network_nodes))
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
         .with_state(state);
 
@@ -199,6 +209,20 @@ async fn get_peers(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let responses: Vec<PeerResponse> = peers
         .into_iter()
         .map(|(addr, pubkey, last_seen)| PeerResponse { addr, pubkey, last_seen })
+        .collect();
+    ApiResponse::ok(responses)
+}
+
+async fn get_network_nodes(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let nodes = state.network.get_network_nodes().await;
+    let responses: Vec<NetworkNodeResponse> = nodes
+        .into_iter()
+        .map(|n| NetworkNodeResponse {
+            addr: n.addr.to_string(),
+            pubkey: n.pubkey,
+            is_relay: n.is_relay,
+            last_seen: n.last_seen,
+        })
         .collect();
     ApiResponse::ok(responses)
 }

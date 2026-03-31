@@ -153,6 +153,24 @@ pub async fn main_hubRelay(peer_id: String, hubRelay_addr: SocketAddr) {
                         println!("{}", msg);
                     }
 
+                    // Un peer demande la liste de TOUS les nœuds du réseau
+                    Message::GetAllNodes { src_addr, .. } => {
+                        let nodes = nodes_list.lock().await;
+                        let all_nodes: Vec<NetworkNode> = nodes.iter()
+                            .map(|(addr, info)| NetworkNode {
+                                addr: *addr,
+                                pubkey: info.pubkey.clone(),
+                                is_relay: info.is_relay,
+                                last_seen: info.last_seen,
+                            })
+                            .collect();
+                        drop(nodes);
+
+                        let msg = Message::AllNodesList { nodes: all_nodes };
+                        let _ = socket.send_msg(&msg, *src_addr).await;
+                        println!("{}", msg);
+                    }
+
                     _ => {
                         // Met à jour le last_seen si on reçoit un message d'un noeud connu
                         let mut nodes = nodes_list.lock().await;
