@@ -44,13 +44,20 @@ impl NetworkState {
 
     pub async fn broadcast_post(&self, post: &Post) {
         let msg = Message::PublishPost { post: post.clone() };
+
+        // Envoyer au Hub Relay pour qu'il redistribue à tous les nœuds
+        if let Err(e) = self.socket.send_msg(&msg, self.hub_addr).await {
+            eprintln!("[WARN] Failed to send post to hub: {}", e);
+        }
+
+        // Envoyer aussi directement aux peers connus (au cas où)
         let peers = self.peers.lock().await;
         for (addr, _) in peers.iter() {
-            if let Err(e) = self.socket.send_msg(&msg, *addr).await {
-                eprintln!("[WARN] Failed to send post to {}: {}", addr, e);
+            if *addr != self.hub_addr {
+                let _ = self.socket.send_msg(&msg, *addr).await;
             }
         }
-        println!("[NET] Post diffusé à {} peers", peers.len());
+        println!("[NET] Post diffusé au hub + {} peers", peers.len());
     }
 
     pub async fn request_posts_from_peers(&self, since: u64, pubkeys: Vec<String>) {
@@ -59,10 +66,17 @@ impl NetworkState {
             since,
             pubkeys,
         };
+
+        // Envoyer au Hub Relay pour qu'il redistribue
+        if let Err(e) = self.socket.send_msg(&msg, self.hub_addr).await {
+            eprintln!("[WARN] Failed to request posts from hub: {}", e);
+        }
+
+        // Envoyer aussi directement aux peers connus
         let peers = self.peers.lock().await;
         for (addr, _) in peers.iter() {
-            if let Err(e) = self.socket.send_msg(&msg, *addr).await {
-                eprintln!("[WARN] Failed to request posts from {}: {}", addr, e);
+            if *addr != self.hub_addr {
+                let _ = self.socket.send_msg(&msg, *addr).await;
             }
         }
     }
