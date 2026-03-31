@@ -179,6 +179,7 @@ Si votre NAT est favorable (FullCone, RestrictedCone, PortRestrictedCone, OpenIn
 | `/api/subscriptions` | POST | S'abonner (`{"pubkey": "..."}`) |
 | `/api/subscriptions/{pk}` | DELETE | Se désabonner |
 | `/api/peers` | GET | Liste des peers connectés |
+| `/api/network` | GET | Liste de tous les nœuds du réseau |
 
 **Exemple avec curl :**
 ```bash
@@ -194,6 +195,9 @@ curl -X POST http://localhost:8080/api/posts \
 curl -X POST http://localhost:8080/api/subscriptions \
   -H "Content-Type: application/json" \
   -d '{"pubkey": "02abc123..."}'
+
+# Voir tous les nœuds du réseau
+curl http://localhost:8080/api/network
 ```
 
 ---
