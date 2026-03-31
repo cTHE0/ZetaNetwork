@@ -21,6 +21,6 @@ async fn main() {
         Mode::Client => client::main_client(opts.peer_id, hubRelay_addr).await,
     }
     
-    println!("\nSee you soon!");
+    println!("\nSee you sooon!");
 
 }
