@@ -1,26 +1,26 @@
-use simple_logger::SimpleLogger;
 use std::net::SocketAddr;
-use log::LevelFilter;
+use std::sync::OnceLock;
 use rand::Rng;
 use crate::nat_detector::util::nat_detect_with_servers;
 use crate::nat_detector::util::NatType;
 
 pub mod util;
 
+static LOGGER_INIT: OnceLock<()> = OnceLock::new();
 
 pub async fn nat_detector () -> std::io::Result<(NatType, SocketAddr)> {
 	// Paramètres modifiables
     let stun_servers: Option<Vec<String>> = None;
     let stun_servers_count: usize = 20;
-    let verbose: bool = false;
 
-    let mut logger = SimpleLogger::new();
-    if verbose {
-        logger = logger.with_level(LevelFilter::Debug);
-    } else {
-        logger = logger.with_level(LevelFilter::Info);
-    }
-    logger.init().unwrap();
+    // Init logger une seule fois
+    LOGGER_INIT.get_or_init(|| {
+        simple_logger::SimpleLogger::new()
+            .with_level(log::LevelFilter::Warn)
+            .init()
+            .ok();
+    });
+
     let vec = stun_servers.unwrap_or_else(|| {
         let vec: Vec<String> = include_str!("valid_ipv4s.txt").lines().map(|e|e.trim().to_string()).collect();
         // select server randomly

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zeta Network</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #15202b;
+            color: #e7e9ea;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+            border-bottom: 1px solid #38444d;
+            margin-bottom: 20px;
+        }
+        h1 { color: #1da1f2; font-size: 24px; }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            background: #192734;
+            border: none;
+            color: #8899a6;
+            cursor: pointer;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+        .tab.active {
+            background: #1da1f2;
+            color: white;
+        }
+        .panel { display: none; }
+        .panel.active { display: block; }
+
+        /* Post form */
+        .post-form {
+            background: #192734;
+            padding: 15px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+        .post-form textarea {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: #e7e9ea;
+            font-size: 16px;
+            resize: none;
+            outline: none;
+            min-height: 80px;
+        }
+        .post-form-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .char-count { color: #8899a6; font-size: 12px; }
+        .btn {
+            background: #1da1f2;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn:hover:not(:disabled) { background: #1a91da; }
+        .btn-danger { background: #e0245e; }
+        .btn-danger:hover { background: #c9214d; }
+        .btn-small { padding: 5px 12px; font-size: 12px; }
+
+        /* Posts */
+        .post {
+            background: #192734;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+        }
+        .post-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .post-author {
+            color: #1da1f2;
+            font-weight: bold;
+            font-size: 14px;
+            word-break: break-all;
+        }
+        .post-time { color: #8899a6; font-size: 12px; }
+        .post-content { line-height: 1.5; word-wrap: break-word; }
+        .post-verified { color: #00ba7c; font-size: 12px; margin-top: 5px; }
+        .post-invalid { color: #e0245e; font-size: 12px; margin-top: 5px; }
+
+        /* Identity */
+        .identity-box {
+            background: #192734;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+        .identity-label { color: #8899a6; margin-bottom: 5px; }
+        .identity-key {
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            background: #15202b;
+            padding: 10px;
+            border-radius: 8px;
+            user-select: all;
+        }
+        .copy-btn {
+            margin-top: 10px;
+            background: #38444d;
+            color: #e7e9ea;
+        }
+
+        /* Subscriptions */
+        .sub-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .sub-form input {
+            flex: 1;
+            background: #192734;
+            border: 1px solid #38444d;
+            color: #e7e9ea;
+            padding: 10px 15px;
+            border-radius: 20px;
+            outline: none;
+        }
+        .sub-form input:focus { border-color: #1da1f2; }
+        .sub-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #192734;
+            padding: 12px 15px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+        .sub-key {
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            flex: 1;
+            margin-right: 10px;
+        }
+
+        /* Peers */
+        .peer-item {
+            background: #192734;
+            padding: 12px 15px;
+            border-radius: 10px;
+            margin-bottom: 8px;
+        }
+        .peer-addr { color: #1da1f2; font-weight: bold; }
+        .peer-info { color: #8899a6; font-size: 12px; margin-top: 5px; }
+
+        .empty-state {
+            text-align: center;
+            color: #8899a6;
+            padding: 40px;
+        }
+        .loading { text-align: center; color: #8899a6; padding: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Zeta Network</h1>
+            <span id="status" style="color: #00ba7c;">Online</span>
+        </header>
+
+        <div class="tabs">
+            <button class="tab active" data-panel="timeline">Timeline</button>
+            <button class="tab" data-panel="identity">Mon Identite</button>
+            <button class="tab" data-panel="subscriptions">Abonnements</button>
+            <button class="tab" data-panel="peers">Peers</button>
+        </div>
+
+        <!-- Timeline Panel -->
+        <div id="timeline" class="panel active">
+            <div class="post-form">
+                <textarea id="post-content" placeholder="Quoi de neuf ?" maxlength="500"></textarea>
+                <div class="post-form-footer">
+                    <span class="char-count"><span id="char-count">0</span>/500</span>
+                    <button class="btn" id="post-btn" disabled>Publier</button>
+                </div>
+            </div>
+            <div id="posts-list" class="loading">Chargement...</div>
+        </div>
+
+        <!-- Identity Panel -->
+        <div id="identity" class="panel">
+            <div class="identity-box">
+                <div class="identity-label">Ma cle publique</div>
+                <div class="identity-key" id="my-pubkey">Chargement...</div>
+                <button class="btn copy-btn" onclick="copyPubkey()">Copier</button>
+            </div>
+            <p style="color: #8899a6; font-size: 14px;">
+                Partagez cette cle publique pour que d'autres utilisateurs puissent s'abonner a vos publications.
+            </p>
+        </div>
+
+        <!-- Subscriptions Panel -->
+        <div id="subscriptions" class="panel">
+            <div class="sub-form">
+                <input type="text" id="sub-input" placeholder="Cle publique a suivre...">
+                <button class="btn" id="sub-btn">Suivre</button>
+            </div>
+            <div id="subs-list" class="loading">Chargement...</div>
+        </div>
+
+        <!-- Peers Panel -->
+        <div id="peers" class="panel">
+            <div id="peers-list" class="loading">Chargement...</div>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(tab.dataset.panel).classList.add('active');
+            });
+        });
+
+        // Post form
+        const postContent = document.getElementById('post-content');
+        const postBtn = document.getElementById('post-btn');
+        const charCount = document.getElementById('char-count');
+
+        postContent.addEventListener('input', () => {
+            const len = postContent.value.length;
+            charCount.textContent = len;
+            postBtn.disabled = len === 0 || len > 500;
+        });
+
+        postBtn.addEventListener('click', async () => {
+            const content = postContent.value.trim();
+            if (!content) return;
+
+            postBtn.disabled = true;
+            try {
+                const res = await fetch(API + '/api/posts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    postContent.value = '';
+                    charCount.textContent = '0';
+                    loadPosts();
+                } else {
+                    alert('Erreur: ' + data.error);
+                }
+            } catch (e) {
+                alert('Erreur reseau');
+            }
+            postBtn.disabled = false;
+        });
+
+        // Load posts
+        async function loadPosts() {
+            const container = document.getElementById('posts-list');
+            try {
+                const res = await fetch(API + '/api/posts');
+                const data = await res.json();
+                if (data.success && data.data.length > 0) {
+                    container.innerHTML = data.data.map(post => `
+                        <div class="post">
+                            <div class="post-header">
+                                <span class="post-author">${post.author_pubkey.substring(0, 16)}...</span>
+                                <span class="post-time">${formatTime(post.timestamp)}</span>
+                            </div>
+                            <div class="post-content">${escapeHtml(post.content)}</div>
+                            ${post.verified
+                                ? '<div class="post-verified">Signature valide</div>'
+                                : '<div class="post-invalid">Signature invalide!</div>'}
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<div class="empty-state">Aucun post. Publiez quelque chose ou abonnez-vous!</div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
+            }
+        }
+
+        // Load identity
+        async function loadIdentity() {
+            try {
+                const res = await fetch(API + '/api/identity');
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('my-pubkey').textContent = data.data.pubkey;
+                }
+            } catch (e) {
+                document.getElementById('my-pubkey').textContent = 'Erreur';
+            }
+        }
+
+        function copyPubkey() {
+            const pubkey = document.getElementById('my-pubkey').textContent;
+            navigator.clipboard.writeText(pubkey);
+            alert('Cle copiee!');
+        }
+
+        // Subscriptions
+        const subInput = document.getElementById('sub-input');
+        const subBtn = document.getElementById('sub-btn');
+
+        subBtn.addEventListener('click', async () => {
+            const pubkey = subInput.value.trim();
+            if (!pubkey) return;
+
+            try {
+                const res = await fetch(API + '/api/subscriptions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pubkey })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    subInput.value = '';
+                    loadSubscriptions();
+                } else {
+                    alert('Erreur: ' + data.error);
+                }
+            } catch (e) {
+                alert('Erreur reseau');
+            }
+        });
+
+        async function loadSubscriptions() {
+            const container = document.getElementById('subs-list');
+            try {
+                const res = await fetch(API + '/api/subscriptions');
+                const data = await res.json();
+                if (data.success && data.data.length > 0) {
+                    container.innerHTML = data.data.map(pk => `
+                        <div class="sub-item">
+                            <span class="sub-key">${pk}</span>
+                            <button class="btn btn-danger btn-small" onclick="unsubscribe('${pk}')">X</button>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<div class="empty-state">Aucun abonnement</div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
+            }
+        }
+
+        async function unsubscribe(pubkey) {
+            try {
+                await fetch(API + '/api/subscriptions/' + encodeURIComponent(pubkey), {
+                    method: 'DELETE'
+                });
+                loadSubscriptions();
+            } catch (e) {
+                alert('Erreur');
+            }
+        }
+
+        // Peers
+        async function loadPeers() {
+            const container = document.getElementById('peers-list');
+            try {
+                const res = await fetch(API + '/api/peers');
+                const data = await res.json();
+                if (data.success && data.data.length > 0) {
+                    container.innerHTML = data.data.map(peer => `
+                        <div class="peer-item">
+                            <div class="peer-addr">${peer.addr}</div>
+                            <div class="peer-info">
+                                ${peer.pubkey ? 'Pubkey: ' + peer.pubkey.substring(0, 16) + '...' : 'Pubkey inconnue'}
+                                | Vu: ${formatTime(peer.last_seen)}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = '<div class="empty-state">Aucun peer connecte</div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
+            }
+        }
+
+        // Utils
+        function formatTime(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString('fr-FR');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initial load
+        loadPosts();
+        loadIdentity();
+        loadSubscriptions();
+        loadPeers();
+
+        // Auto-refresh posts every 30s
+        setInterval(loadPosts, 30000);
+        setInterval(loadPeers, 60000);
+    </script>
+</body>
+</html>

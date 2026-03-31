@@ -1,9 +1,15 @@
 use std::net::SocketAddr;
 use clap::Parser;
+
 mod client;
 mod nat_detector;
 mod lib_p2p;
 mod hubRelay;
+mod crypto;
+mod storage;
+mod post;
+mod network;
+mod web;
 
 use crate::lib_p2p::*;
 

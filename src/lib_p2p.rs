@@ -9,6 +9,8 @@ use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::collections::HashMap;
 
+use crate::post::Post;
+
 pub type PeersMap = Arc<Mutex<HashMap<SocketAddr, (String, u64)>>>; // un noeud = [Addr, (pseudo, derniere connection en secs)]
 
 #[derive(Debug, Parser, Clone)]
@@ -99,6 +101,37 @@ pub enum Message {
         src_id: String,
         time: u64,
     },
+
+    // ========== Messages pour le réseau social ==========
+
+    PublishPost {  // Diffuser un nouveau post aux peers
+        post: Post,
+    },
+
+    RequestPosts {  // Demander les posts récents de certains auteurs
+        src_addr: SocketAddr,
+        since: u64,           // Timestamp depuis lequel on veut les posts
+        pubkeys: Vec<String>, // Liste des clés publiques des auteurs recherchés
+    },
+
+    PostsBatch {  // Réponse à RequestPosts
+        posts: Vec<Post>,
+    },
+
+    NodeAnnounce {  // Annonce d'un noeud avec sa clé publique
+        addr: SocketAddr,
+        pubkey: String,
+        time: u64,
+    },
+
+    GetPeers {  // Demande la liste des peers connus
+        src_addr: SocketAddr,
+        time: u64,
+    },
+
+    PeersList {  // Liste des peers connus
+        peers: Vec<(SocketAddr, String)>,  // (addr, pubkey)
+    },
 }
 
 #[async_trait::async_trait]
@@ -174,6 +207,32 @@ impl fmt::Display for Message {
                     .unwrap_or_else(|| format!("t={}", time));
                 write!(f, "[NoRelayAvailable] [{} ({}) → {} ({})] ({})", src_addr, src_id, dst_addr, dst_id, time_str)
             }
+            Message::PublishPost { post } => {
+                write!(f, "[PublishPost] {}", post)
+            }
+            Message::RequestPosts { src_addr, since, pubkeys } => {
+                let count = pubkeys.len();
+                write!(f, "[RequestPosts] {} demande posts depuis {} pour {} auteurs", src_addr, since, count)
+            }
+            Message::PostsBatch { posts } => {
+                write!(f, "[PostsBatch] {} posts", posts.len())
+            }
+            Message::NodeAnnounce { addr, pubkey, time } => {
+                let pk_short = if pubkey.len() > 12 { &pubkey[..12] } else { pubkey };
+                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_else(|| format!("t={}", time));
+                write!(f, "[NodeAnnounce] {} ({}...) ({})", addr, pk_short, time_str)
+            }
+            Message::GetPeers { src_addr, time } => {
+                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
+                    .map(|dt| dt.format("%H:%M:%S").to_string())
+                    .unwrap_or_else(|| format!("t={}", time));
+                write!(f, "[GetPeers] {} ({})", src_addr, time_str)
+            }
+            Message::PeersList { peers } => {
+                write!(f, "[PeersList] {} peers", peers.len())
+            }
         }
     }
 }
@@ -190,9 +249,9 @@ pub async fn get_public_ip(socket: &UdpSocket) -> Result<SocketAddr> {
 }
 
 pub async fn recv_msg(socket: &UdpSocket) -> Option<(Message, SocketAddr)> {
-    let mut buf = [0; 1024];
+    let mut buf = [0; 4096];  // Buffer augmenté pour les posts
     let (size, sender_addr) = socket.recv_from(&mut buf).await.expect("Nothing received");
-    if size == 0 || size >= 1024 {
+    if size == 0 || size >= 4096 {
         println!("The message's size is incorrect({})", size);
         return None;
     }

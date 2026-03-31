@@ -1,2 +1,10 @@
 target/
 Cargo.lock
+*.db
+*.log
+
+# Credentials - NE JAMAIS COMMITER
+.deploy_credentials
+.env
+*.pem
+*.key
