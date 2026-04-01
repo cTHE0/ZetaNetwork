@@ -141,6 +141,7 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
             let msg = Message::NodeAnnounce {
                 addr: public_addr,
                 pubkey: network_announce.keypair.public_hex(),
+                is_relay: network_announce.is_relay,
                 time: now_secs(),
             };
             let _ = network_announce.socket.send_msg(&msg, hubRelay_addr_clone).await;

@@ -5,13 +5,8 @@ use clap::{Parser, ValueEnum};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use anyhow::Result;
-use tokio::sync::Mutex;
-use std::sync::Arc;
-use std::collections::HashMap;
 
 use crate::post::Post;
-
-pub type PeersMap = Arc<Mutex<HashMap<SocketAddr, (String, u64)>>>; // un noeud = [Addr, (pseudo, derniere connection en secs)]
 
 #[derive(Debug, Parser, Clone)]
 pub struct Opts {
@@ -80,14 +75,6 @@ pub enum Message {
         time: u64,
     },
 
-    RelayHasNewClient {
-        src_addr: SocketAddr,
-        src_id: String,
-        peer_addr: SocketAddr,
-        peer_id: String,
-        time: u64,
-    },
-
     NoRelayAvailable {
         src_addr: SocketAddr,
         src_id: String,
@@ -121,16 +108,8 @@ pub enum Message {
     NodeAnnounce {  // Annonce d'un noeud avec sa clé publique
         addr: SocketAddr,
         pubkey: String,
+        is_relay: bool,
         time: u64,
-    },
-
-    GetPeers {  // Demande la liste des peers connus
-        src_addr: SocketAddr,
-        time: u64,
-    },
-
-    PeersList {  // Liste des peers connus
-        peers: Vec<(SocketAddr, String)>,  // (addr, pubkey)
     },
 
     GetAllNodes {  // Demande la liste de tous les nœuds du réseau au Hub
@@ -212,12 +191,6 @@ impl fmt::Display for Message {
                     .unwrap_or_else(|| format!("t={}", time));
                 write!(f, "[Ack] {} ({}) ({})", src_addr, src_id, time_str)
             }
-            Message::RelayHasNewClient { peer_addr, peer_id, src_addr, src_id, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[RelayHasNewClient] {} ({}) wants to connect to relay {} ({}) ({})", peer_addr, peer_id, src_addr, src_id, time_str)
-            }
             Message::NoRelayAvailable { src_addr, src_id, dst_addr, dst_id, time } => {
                 let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
                     .map(|dt| dt.format("%H:%M:%S").to_string())
@@ -234,21 +207,13 @@ impl fmt::Display for Message {
             Message::PostsBatch { posts } => {
                 write!(f, "[PostsBatch] {} posts", posts.len())
             }
-            Message::NodeAnnounce { addr, pubkey, time } => {
+            Message::NodeAnnounce { addr, pubkey, is_relay, time } => {
                 let pk_short = if pubkey.len() > 12 { &pubkey[..12] } else { pubkey };
+                let node_type = if *is_relay { "relay" } else { "client" };
                 let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
                     .map(|dt| dt.format("%H:%M:%S").to_string())
                     .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[NodeAnnounce] {} ({}...) ({})", addr, pk_short, time_str)
-            }
-            Message::GetPeers { src_addr, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[GetPeers] {} ({})", src_addr, time_str)
-            }
-            Message::PeersList { peers } => {
-                write!(f, "[PeersList] {} peers", peers.len())
+                write!(f, "[NodeAnnounce] {} ({}...) [{}] ({})", addr, pk_short, node_type, time_str)
             }
             Message::GetAllNodes { src_addr, time } => {
                 let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
@@ -291,27 +256,4 @@ pub fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
         .as_secs()
-}
-
-pub async fn delete_disconnected_peers(peers: &PeersMap) {
-    let mut peers_map = peers.lock().await;
-    peers_map.retain(|addr, (_, last_seen)| {
-        let active = now_secs() - *last_seen < 120;
-        if !active { println!("[INFO] Peer {} disconnected (timeout)", addr); }
-        active
-    });
-}
-
-pub async fn relay_message(peers: &PeersMap, sender_addr: SocketAddr, msg: Message, socket: &UdpSocket) {
-    let mut peers_map = peers.lock().await;
-
-    for (other_addr, _) in peers_map.iter_mut() {
-        if other_addr != &sender_addr {
-            if let Err(e) = socket.send_msg(&msg, *other_addr).await {
-                eprintln!("Failed to send to {}: {}", other_addr, e);
-            } else {
-                println!("    Relayed to {}", other_addr);
-            }
-        }
-    }
 }

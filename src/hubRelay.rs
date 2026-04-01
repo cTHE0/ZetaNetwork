@@ -7,30 +7,56 @@ use std::net::SocketAddr;
 
 use crate::lib_p2p::*;
 
-// Un noeud = [Addr, (pubkey, derniere connection en secs, is_relay)]
-pub type NodesMap = Arc<Mutex<HashMap<SocketAddr, NodeInfo>>>;
+/// HubRelay : Serveur d'annuaire centralisé pour le réseau social décentralisé
+///
+/// Rôle : Stocker et distribuer la liste de tous les nœuds du réseau
+/// Contenu : IP, clé publique, type de nœud (relay/client), dernière activité
+///
+/// Messages gérés :
+/// - NodeAnnounce : Un nœud s'enregistre ou met à jour ses informations
+/// - GetAllNodes : Un nœud demande la liste complète des nœuds actifs
+
+type NodesMap = Arc<Mutex<HashMap<SocketAddr, NodeInfo>>>;
 
 #[derive(Clone, Debug)]
-pub struct NodeInfo {
-    pub pubkey: String,
-    pub last_seen: u64,
-    pub is_relay: bool,
+struct NodeInfo {
+    pubkey: String,     // Clé publique du nœud (identifiant unique)
+    last_seen: u64,     // Timestamp Unix de la dernière activité
+    is_relay: bool,     // Type : true = relay, false = simple client
+}
+
+impl NodeInfo {
+    fn to_network_node(&self, addr: SocketAddr) -> NetworkNode {
+        NetworkNode {
+            addr,
+            pubkey: self.pubkey.clone(),
+            is_relay: self.is_relay,
+            last_seen: self.last_seen,
+        }
+    }
 }
 
 pub async fn main_hubRelay(peer_id: String, hubRelay_addr: SocketAddr) {
-    // Le hub relay démarre l'écoute
-    let socket = UdpSocket::bind("0.0.0.0:55555").await.expect("Failed to bind");
-    let public_addr: SocketAddr = get_public_ip(&socket).await.expect("Public IP not obtained.");
-    println!("\nThe hub relay listens on {} ({})...", public_addr, peer_id);
+    println!("\n=== HubRelay : Serveur d'annuaire du réseau social ===");
+
+    // Bind sur le port configuré
+    let socket = UdpSocket::bind("0.0.0.0:55555").await
+        .expect("Failed to bind socket");
+
+    let public_addr = get_public_ip(&socket).await
+        .expect("Failed to get public IP");
+
+    println!("Écoute sur {} (ID: {})", public_addr, peer_id);
+
     if hubRelay_addr != public_addr {
-        println!("[ERROR] The hub relay has an address different as expected");
+        eprintln!("[ERREUR] L'adresse publique ne correspond pas à l'adresse configurée");
         return;
     }
 
-    // Crée la liste de tous les noeuds (relais et clients)
+    // Base de données des nœuds actifs
     let nodes_list: NodesMap = Arc::new(Mutex::new(HashMap::new()));
 
-    // Suppression automatique des noeuds inactifs
+    // Tâche de nettoyage automatique des nœuds inactifs (toutes les 30 secondes)
     let nodes_cleanup = Arc::clone(&nodes_list);
     tokio::spawn(async move {
         loop {
@@ -39,160 +65,130 @@ pub async fn main_hubRelay(peer_id: String, hubRelay_addr: SocketAddr) {
         }
     });
 
-    // Affichage périodique des stats
+    // Affichage périodique des statistiques (toutes les 60 secondes)
     let nodes_stats = Arc::clone(&nodes_list);
     tokio::spawn(async move {
         loop {
             sleep(Duration::from_secs(60)).await;
-            let nodes = nodes_stats.lock().await;
-            let relays = nodes.values().filter(|n| n.is_relay).count();
-            let clients = nodes.len() - relays;
-            println!("[STATS] {} relays, {} clients actifs", relays, clients);
+            print_stats(&nodes_stats).await;
         }
     });
 
+    println!("Prêt à recevoir des nœuds...\n");
+
+    // Boucle principale de réception
     let mut buf = vec![0; 4096];
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((size, sender_addr)) => {
-                if size == 0 || size >= 4096 { continue; }
+                if size == 0 || size >= 4096 {
+                    continue;
+                }
+
                 let msg: Message = match bincode::deserialize(&buf[..size]) {
                     Ok(m) => m,
                     Err(e) => {
-                        eprintln!("[ERROR] Deserialization failed: {}", e);
+                        eprintln!("[ERREUR] Désérialisation : {}", e);
                         continue;
                     }
                 };
-                println!("{}", msg);
 
-                match &msg {
-                    // Un relai se déclare
-                    Message::BeNewRelay { src_addr, src_id, time, .. } => {
-                        nodes_list.lock().await.insert(*src_addr, NodeInfo {
-                            pubkey: src_id.clone(),
-                            last_seen: *time,
-                            is_relay: true,
-                        });
-
-                        let ack = Message::Ack {
-                            src_addr: public_addr,
-                            src_id: peer_id.clone(),
-                            time: now_secs(),
-                        };
-                        let _ = socket.send_msg(&ack, sender_addr).await;
-                        println!("{}", ack);
-                    }
-
-                    // Un noeud s'annonce avec sa pubkey
-                    Message::NodeAnnounce { addr, pubkey, time } => {
-                        let mut nodes = nodes_list.lock().await;
-                        nodes.entry(*addr)
-                            .and_modify(|n| {
-                                n.pubkey = pubkey.clone();
-                                n.last_seen = *time;
-                            })
-                            .or_insert(NodeInfo {
-                                pubkey: pubkey.clone(),
-                                last_seen: *time,
-                                is_relay: false,
-                            });
-                    }
-
-                    // Un peer cherche un relai : on lui en renvoie un
-                    Message::NeedRelay { src_addr, src_id, .. } => {
-                        let nodes = nodes_list.lock().await;
-                        // Trouver un relay actif
-                        let relay = nodes.iter()
-                            .find(|(_, info)| info.is_relay)
-                            .map(|(addr, info)| (*addr, info.pubkey.clone()));
-                        drop(nodes);
-
-                        if let Some((relay_addr, relay_pubkey)) = relay {
-                            let msg = Message::PeerInfo {
-                                peer_addr: relay_addr,
-                                peer_id: relay_pubkey,
-                            };
-                            let _ = socket.send_msg(&msg, *src_addr).await;
-                            println!("{}", msg);
-
-                            // Avertissons le relais concerné
-                            let msg = Message::RelayHasNewClient {
-                                src_addr: public_addr,
-                                src_id: peer_id.clone(),
-                                peer_addr: *src_addr,
-                                peer_id: src_id.clone(),
-                                time: now_secs(),
-                            };
-                            let _ = socket.send_msg(&msg, relay_addr).await;
-                            println!("{}", msg);
-                        } else {
-                            let msg = Message::NoRelayAvailable {
-                                src_addr: public_addr,
-                                src_id: peer_id.clone(),
-                                dst_addr: *src_addr,
-                                dst_id: src_id.clone(),
-                                time: now_secs(),
-                            };
-                            let _ = socket.send_msg(&msg, *src_addr).await;
-                            println!("{}", msg);
-                        }
-                    }
-
-                    // Un peer demande la liste des peers
-                    Message::GetPeers { src_addr, .. } => {
-                        let nodes = nodes_list.lock().await;
-                        let peers: Vec<(SocketAddr, String)> = nodes.iter()
-                            .filter(|(addr, _)| **addr != *src_addr)
-                            .take(20)  // Limiter à 20 peers
-                            .map(|(addr, info)| (*addr, info.pubkey.clone()))
-                            .collect();
-                        drop(nodes);
-
-                        let msg = Message::PeersList { peers };
-                        let _ = socket.send_msg(&msg, *src_addr).await;
-                        println!("{}", msg);
-                    }
-
-                    // Un peer demande la liste de TOUS les nœuds du réseau
-                    Message::GetAllNodes { src_addr, .. } => {
-                        let nodes = nodes_list.lock().await;
-                        let all_nodes: Vec<NetworkNode> = nodes.iter()
-                            .map(|(addr, info)| NetworkNode {
-                                addr: *addr,
-                                pubkey: info.pubkey.clone(),
-                                is_relay: info.is_relay,
-                                last_seen: info.last_seen,
-                            })
-                            .collect();
-                        drop(nodes);
-
-                        let msg = Message::AllNodesList { nodes: all_nodes };
-                        let _ = socket.send_msg(&msg, *src_addr).await;
-                        println!("{}", msg);
-                    }
-
-                    _ => {
-                        // Met à jour le last_seen si on reçoit un message d'un noeud connu
-                        let mut nodes = nodes_list.lock().await;
-                        if let Some(info) = nodes.get_mut(&sender_addr) {
-                            info.last_seen = now_secs();
-                        }
-                    }
-                }
+                println!("← {}", msg);
+                handle_message(&socket, &nodes_list, msg, sender_addr).await;
             }
-            Err(e) => eprintln!("[ERROR] a message contain an error ({})", e),
+            Err(e) => {
+                eprintln!("[ERREUR] Réception : {}", e);
+            }
         }
     }
 }
 
+/// Gère les messages reçus par le HubRelay
+async fn handle_message(
+    socket: &UdpSocket,
+    nodes_list: &NodesMap,
+    msg: Message,
+    _sender_addr: SocketAddr,
+) {
+    match msg {
+        // Un nœud s'enregistre ou met à jour ses informations
+        Message::NodeAnnounce { addr, pubkey, is_relay, time } => {
+            let mut nodes = nodes_list.lock().await;
+            nodes.entry(addr)
+                .and_modify(|node| {
+                    node.pubkey = pubkey.clone();
+                    node.is_relay = is_relay;
+                    node.last_seen = time;
+                })
+                .or_insert(NodeInfo {
+                    pubkey,
+                    last_seen: time,
+                    is_relay,
+                });
+            println!("  → Nœud enregistré : {}", addr);
+        }
+
+        // Un nœud demande la liste complète des nœuds actifs
+        Message::GetAllNodes { src_addr, .. } => {
+            let nodes = nodes_list.lock().await;
+            let all_nodes: Vec<NetworkNode> = nodes
+                .iter()
+                .map(|(addr, info)| info.to_network_node(*addr))
+                .collect();
+            drop(nodes);
+
+            let response = Message::AllNodesList { nodes: all_nodes };
+            if let Err(e) = socket.send_msg(&response, src_addr).await {
+                eprintln!("[ERREUR] Envoi : {}", e);
+            } else {
+                println!("  → Liste envoyée à {} ({} nœuds)", src_addr, response.nodes_count());
+            }
+        }
+
+        // Messages non gérés par le HubRelay
+        _ => {
+            println!("  ⚠ Message ignoré (non géré par le HubRelay)");
+        }
+    }
+}
+
+/// Supprime les nœuds inactifs depuis plus de 5 minutes
 async fn cleanup_inactive_nodes(nodes: &NodesMap) {
     let mut nodes_map = nodes.lock().await;
     let now = now_secs();
+    let timeout = 300; // 5 minutes
+
+    let before_count = nodes_map.len();
     nodes_map.retain(|addr, info| {
-        let active = now - info.last_seen < 300;  // 5 minutes timeout
-        if !active {
-            println!("[INFO] Node {} disconnected (timeout)", addr);
+        let is_active = now - info.last_seen < timeout;
+        if !is_active {
+            println!("[INFO] Nœud déconnecté (timeout) : {}", addr);
         }
-        active
+        is_active
     });
+
+    let removed = before_count - nodes_map.len();
+    if removed > 0 {
+        println!("[CLEANUP] {} nœud(s) supprimé(s)", removed);
+    }
+}
+
+/// Affiche les statistiques du réseau
+async fn print_stats(nodes: &NodesMap) {
+    let nodes_map = nodes.lock().await;
+    let total = nodes_map.len();
+    let relays = nodes_map.values().filter(|n| n.is_relay).count();
+    let clients = total - relays;
+
+    println!("\n[STATS] {} nœuds actifs → {} relay(s) + {} client(s)\n", total, relays, clients);
+}
+
+// Extension pour Message pour faciliter l'affichage
+impl Message {
+    fn nodes_count(&self) -> usize {
+        match self {
+            Message::AllNodesList { nodes } => nodes.len(),
+            _ => 0,
+        }
+    }
 }

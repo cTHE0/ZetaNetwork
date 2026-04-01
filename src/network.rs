@@ -102,6 +102,7 @@ impl NetworkState {
         let msg = Message::NodeAnnounce {
             addr: self.public_addr,
             pubkey: self.keypair.public_hex(),
+            is_relay: self.is_relay,
             time: now_secs(),
         };
         let peers = self.peers.lock().await;
@@ -216,7 +217,7 @@ impl NetworkState {
                 }
             }
 
-            Message::NodeAnnounce { addr, pubkey, time } => {
+            Message::NodeAnnounce { addr, pubkey, is_relay: _, time } => {
                 // Ajouter/mettre à jour le peer
                 let mut peers = self.peers.lock().await;
                 peers.insert(addr, (pubkey.clone(), time));
@@ -224,26 +225,6 @@ impl NetworkState {
 
                 let storage = self.storage.lock().await;
                 let _ = storage.save_peer(&addr.to_string(), Some(&pubkey), time);
-            }
-
-            Message::GetPeers { src_addr, .. } => {
-                let peers = self.peers.lock().await;
-                let peers_list: Vec<(SocketAddr, String)> = peers
-                    .iter()
-                    .map(|(a, (pk, _))| (*a, pk.clone()))
-                    .collect();
-                drop(peers);
-
-                let response = Message::PeersList { peers: peers_list };
-                let _ = self.socket.send_msg(&response, src_addr).await;
-            }
-
-            Message::PeersList { peers } => {
-                for (addr, pubkey) in peers {
-                    if addr != self.public_addr {
-                        self.add_peer(addr, pubkey).await;
-                    }
-                }
             }
 
             Message::AllNodesList { nodes } => {
