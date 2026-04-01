@@ -57,14 +57,7 @@ impl NetworkState {
 
         let msg = Message::PublishPost { post: post.clone() };
 
-        // Envoyer à tous les peers connus (relays + clients)
-        let peers = self.peers.lock().await;
-        for (addr, _) in peers.iter() {
-            let _ = self.socket.send_msg(&msg, *addr).await;
-        }
-        drop(peers);
-
-        // Envoyer aussi aux relays connus via la liste du réseau
+        // Envoyer uniquement aux relays connus
         let nodes = self.network_nodes.lock().await;
         for node in nodes.iter() {
             if node.is_relay && node.addr != self.public_addr {
@@ -72,7 +65,7 @@ impl NetworkState {
             }
         }
 
-        println!("[NET] Post diffusé aux peers et relays");
+        println!("[NET] Post envoyé aux relays");
     }
 
     pub async fn request_posts_from_peers(&self, since: u64, pubkeys: Vec<String>) {
@@ -82,14 +75,7 @@ impl NetworkState {
             pubkeys,
         };
 
-        // Envoyer aux peers connus
-        let peers = self.peers.lock().await;
-        for (addr, _) in peers.iter() {
-            let _ = self.socket.send_msg(&msg, *addr).await;
-        }
-        drop(peers);
-
-        // Envoyer aussi aux relays connus
+        // Envoyer uniquement aux relays connus
         let nodes = self.network_nodes.lock().await;
         for node in nodes.iter() {
             if node.is_relay && node.addr != self.public_addr {
@@ -168,27 +154,34 @@ impl NetworkState {
                 // SEULS les relays propagent aux autres nœuds
                 if self.is_relay {
                     let relay_msg = Message::PublishPost { post };
-                    let peers = self.peers.lock().await;
-                    for (addr, _) in peers.iter() {
-                        if *addr != sender_addr {
-                            let _ = self.socket.send_msg(&relay_msg, *addr).await;
-                        }
-                    }
-                    drop(peers);
 
-                    // Propager aussi aux autres relays
+                    // Propager aux autres relays (pour qu'ils relaient à leurs clients)
                     let nodes = self.network_nodes.lock().await;
                     for node in nodes.iter() {
                         if node.is_relay && node.addr != self.public_addr && node.addr != sender_addr {
                             let _ = self.socket.send_msg(&relay_msg, node.addr).await;
                         }
                     }
-                    println!("[RELAY] Post propagé aux autres nœuds");
+                    drop(nodes);
+
+                    // Propager aussi aux clients connus (connectés à ce relay)
+                    let peers = self.peers.lock().await;
+                    for (addr, _) in peers.iter() {
+                        if *addr != sender_addr {
+                            let _ = self.socket.send_msg(&relay_msg, *addr).await;
+                        }
+                    }
+
+                    println!("[RELAY] Post propagé aux autres relays et clients");
                 }
             }
 
             Message::RequestPosts { src_addr, since, pubkeys } => {
-                // TOUS les nœuds répondent (clients ET relays)
+                // SEULS les relays répondent aux requêtes
+                if !self.is_relay {
+                    return; // Les clients ne répondent pas
+                }
+
                 // Récupérer les posts demandés
                 let storage = self.storage.lock().await;
                 let posts = if pubkeys.is_empty() {
@@ -205,6 +198,8 @@ impl NetworkState {
                 let response = Message::PostsBatch { posts };
                 if let Err(e) = self.socket.send_msg(&response, src_addr).await {
                     eprintln!("[WARN] Failed to send posts batch: {}", e);
+                } else {
+                    println!("[RELAY] Réponse envoyée à {}", src_addr);
                 }
             }
 

@@ -23,13 +23,16 @@ const WEB_PORT: u16 = 8080;
 ///
 /// RELAY (NAT ouverte) :
 /// - Peut recevoir des connexions entrantes
-/// - Peut envoyer et recevoir des messages
-/// - PROPAGE les messages aux autres nœuds (relais automatique)
+/// - Reçoit et stocke les posts
+/// - RÉPOND aux requêtes RequestPosts
+/// - PROPAGE les posts aux autres relays ET à ses clients
 ///
 /// CLIENT (NAT restrictive) :
-/// - Peut envoyer et recevoir des messages
-/// - NE PROPAGE PAS les messages (ne fait pas de relais)
-/// - S'appuie sur les relays pour la propagation
+/// - Peut seulement envoyer aux relays
+/// - Reçoit et stocke les posts envoyés par les relays
+/// - NE RÉPOND PAS aux requêtes
+/// - NE PROPAGE PAS les messages
+/// - Dépend totalement des relays pour la communication
 pub async fn main_client(_peer_id: String, hub_relay_addr: SocketAddr) {
     println!("\n=== Initialisation du nœud ===");
 
@@ -64,11 +67,14 @@ pub async fn main_client(_peer_id: String, hub_relay_addr: SocketAddr) {
     if is_relay {
         println!("\n[RÔLE] RELAY");
         println!("  → Peut recevoir des connexions entrantes");
-        println!("  → Propage les messages aux autres nœuds");
+        println!("  → Répond aux requêtes des autres nœuds");
+        println!("  → Propage les messages aux autres relays et clients");
     } else {
         println!("\n[RÔLE] CLIENT");
-        println!("  → Peut envoyer et recevoir des messages");
-        println!("  → Ne propage PAS les messages (s'appuie sur les relays)");
+        println!("  → Peut SEULEMENT envoyer aux relays");
+        println!("  → Ne répond PAS aux requêtes");
+        println!("  → Ne propage PAS les messages");
+        println!("  → Dépend entièrement des relays");
     }
 
     // 5. Créer l'état du réseau
