@@ -156,7 +156,7 @@ impl NetworkState {
                     return;
                 }
 
-                // Stocker le post
+                // Stocker le post (TOUS les nœuds stockent : clients ET relays)
                 {
                     let storage = self.storage.lock().await;
                     if let Err(e) = storage.save_post(&post) {
@@ -165,7 +165,7 @@ impl NetworkState {
                 }
                 println!("[NET] Post stocké: {}", post);
 
-                // Si on est un relay, propager aux autres peers (sauf l'expéditeur)
+                // SEULS les relays propagent aux autres nœuds
                 if self.is_relay {
                     let relay_msg = Message::PublishPost { post };
                     let peers = self.peers.lock().await;
@@ -188,6 +188,7 @@ impl NetworkState {
             }
 
             Message::RequestPosts { src_addr, since, pubkeys } => {
+                // TOUS les nœuds répondent (clients ET relays)
                 // Récupérer les posts demandés
                 let storage = self.storage.lock().await;
                 let posts = if pubkeys.is_empty() {
@@ -208,7 +209,7 @@ impl NetworkState {
             }
 
             Message::PostsBatch { posts } => {
-                // Stocker les posts reçus (après vérification)
+                // TOUS les nœuds stockent les posts reçus (après vérification)
                 let storage = self.storage.lock().await;
                 for post in posts {
                     if post.verify() {
@@ -218,6 +219,7 @@ impl NetworkState {
             }
 
             Message::NodeAnnounce { addr, pubkey, is_relay: _, time } => {
+                // TOUS les nœuds acceptent les annonces
                 // Ajouter/mettre à jour le peer
                 let mut peers = self.peers.lock().await;
                 peers.insert(addr, (pubkey.clone(), time));

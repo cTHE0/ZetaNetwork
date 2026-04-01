@@ -13,16 +13,23 @@ use crate::web::start_web_server;
 const DB_PATH: &str = "zeta_data.db";
 const WEB_PORT: u16 = 8080;
 
-/// Point d'entrée principal pour un nœud client du réseau social décentralisé
+/// Point d'entrée principal pour un nœud du réseau social décentralisé
 ///
 /// Fonctionnement :
 /// 1. Détecte le type de NAT pour déterminer le rôle (relay ou simple client)
-/// 2. S'enregistre auprès du HubRelay avec NodeAnnounce
-/// 3. Récupère la liste des relays disponibles via GetAllNodes
+/// 2. S'enregistre auprès du HubRelay avec NodeAnnounce (clients ET relays)
+/// 3. Récupère la liste de tous les nœuds via GetAllNodes
 /// 4. Lance les services (web, réception, synchronisation)
 ///
-/// Relay : Peut recevoir des connexions entrantes et propager les messages
-/// Client : Ne peut qu'envoyer aux relays pour publier/récupérer des posts
+/// RELAY (NAT ouverte) :
+/// - Peut recevoir des connexions entrantes
+/// - Peut envoyer et recevoir des messages
+/// - PROPAGE les messages aux autres nœuds (relais automatique)
+///
+/// CLIENT (NAT restrictive) :
+/// - Peut envoyer et recevoir des messages
+/// - NE PROPAGE PAS les messages (ne fait pas de relais)
+/// - S'appuie sur les relays pour la propagation
 pub async fn main_client(_peer_id: String, hub_relay_addr: SocketAddr) {
     println!("\n=== Initialisation du nœud ===");
 
@@ -55,9 +62,13 @@ pub async fn main_client(_peer_id: String, hub_relay_addr: SocketAddr) {
     let is_relay = matches!(nat_type, OpenInternet | FullCone | RestrictedCone | PortRestrictedCone);
 
     if is_relay {
-        println!("\n[RÔLE] RELAY - Ce nœud peut recevoir des connexions et propager les messages");
+        println!("\n[RÔLE] RELAY");
+        println!("  → Peut recevoir des connexions entrantes");
+        println!("  → Propage les messages aux autres nœuds");
     } else {
-        println!("\n[RÔLE] CLIENT - Ce nœud ne peut qu'envoyer aux relays");
+        println!("\n[RÔLE] CLIENT");
+        println!("  → Peut envoyer et recevoir des messages");
+        println!("  → Ne propage PAS les messages (s'appuie sur les relays)");
     }
 
     // 5. Créer l'état du réseau
