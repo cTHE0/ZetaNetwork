@@ -337,9 +337,10 @@
                     charCount.textContent = '0';
                     loadPosts();
                 } else {
-                    alert('Erreur: ' + data.error);
+                    alert('Erreur: ' + (data.error || 'Inconnue'));
                 }
             } catch (e) {
+                console.error('Erreur création post:', e);
                 alert('Erreur reseau');
             }
             postBtn.disabled = false;
@@ -351,7 +352,7 @@
             try {
                 const res = await fetch(API + '/api/posts');
                 const data = await res.json();
-                if (data.success && data.data.length > 0) {
+                if (data.success && data.data && data.data.length > 0) {
                     container.innerHTML = data.data.map(post => `
                         <div class="post">
                             <div class="post-header">
@@ -360,14 +361,15 @@
                             </div>
                             <div class="post-content">${escapeHtml(post.content)}</div>
                             ${post.verified
-                                ? '<div class="post-verified">Signature valide</div>'
-                                : '<div class="post-invalid">Signature invalide!</div>'}
+                                ? '<div class="post-verified">✓ Signature valide</div>'
+                                : '<div class="post-invalid">⚠ Signature invalide!</div>'}
                         </div>
                     `).join('');
                 } else {
                     container.innerHTML = '<div class="empty-state">Aucun post. Publiez quelque chose ou abonnez-vous!</div>';
                 }
             } catch (e) {
+                console.error('Erreur loadPosts:', e);
                 container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
             }
         }
@@ -377,10 +379,11 @@
             try {
                 const res = await fetch(API + '/api/identity');
                 const data = await res.json();
-                if (data.success) {
+                if (data.success && data.data) {
                     document.getElementById('my-pubkey').textContent = data.data.pubkey;
                 }
             } catch (e) {
+                console.error('Erreur loadIdentity:', e);
                 document.getElementById('my-pubkey').textContent = 'Erreur';
             }
         }
@@ -409,10 +412,12 @@
                 if (data.success) {
                     subInput.value = '';
                     loadSubscriptions();
+                    loadNetworkNodes(); // Mettre à jour l'affichage des boutons "Suivre"
                 } else {
-                    alert('Erreur: ' + data.error);
+                    alert('Erreur: ' + (data.error || 'Inconnue'));
                 }
             } catch (e) {
+                console.error('Erreur ajout abonnement:', e);
                 alert('Erreur reseau');
             }
         });
@@ -422,7 +427,7 @@
             try {
                 const res = await fetch(API + '/api/subscriptions');
                 const data = await res.json();
-                if (data.success && data.data.length > 0) {
+                if (data.success && data.data && data.data.length > 0) {
                     container.innerHTML = data.data.map(pk => `
                         <div class="sub-item">
                             <span class="sub-key">${pk}</span>
@@ -433,6 +438,7 @@
                     container.innerHTML = '<div class="empty-state">Aucun abonnement</div>';
                 }
             } catch (e) {
+                console.error('Erreur loadSubscriptions:', e);
                 container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
             }
         }
@@ -443,7 +449,9 @@
                     method: 'DELETE'
                 });
                 loadSubscriptions();
+                loadNetworkNodes(); // Mettre à jour l'affichage des boutons "Suivre"
             } catch (e) {
+                console.error('Erreur suppression abonnement:', e);
                 alert('Erreur');
             }
         }
@@ -454,7 +462,7 @@
             try {
                 const res = await fetch(API + '/api/peers');
                 const data = await res.json();
-                if (data.success && data.data.length > 0) {
+                if (data.success && data.data && data.data.length > 0) {
                     container.innerHTML = data.data.map(peer => `
                         <div class="peer-item">
                             <div class="peer-addr">${peer.addr}</div>
@@ -468,6 +476,7 @@
                     container.innerHTML = '<div class="empty-state">Aucun peer connecte</div>';
                 }
             } catch (e) {
+                console.error('Erreur loadPeers:', e);
                 container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
             }
         }
@@ -481,13 +490,13 @@
                 // Charger les abonnements pour savoir qui on suit deja
                 const subsRes = await fetch(API + '/api/subscriptions');
                 const subsData = await subsRes.json();
-                if (subsData.success) {
+                if (subsData.success && subsData.data) {
                     mySubscriptions = subsData.data;
                 }
 
                 const res = await fetch(API + '/api/network');
                 const data = await res.json();
-                if (data.success && data.data.length > 0) {
+                if (data.success && data.data && data.data.length > 0) {
                     const nodes = data.data;
                     const relays = nodes.filter(n => n.is_relay).length;
                     const clients = nodes.length - relays;
@@ -513,7 +522,7 @@
                             <button class="btn btn-small btn-follow ${isFollowing ? 'following' : ''}"
                                     onclick="followNode('${node.pubkey}')"
                                     ${isFollowing ? 'disabled' : ''}>
-                                ${isFollowing ? 'Suivi' : 'Suivre'}
+                                ${isFollowing ? '✓ Suivi' : 'Suivre'}
                             </button>
                         </div>
                     `}).join('');
@@ -524,6 +533,7 @@
                     container.innerHTML = '<div class="empty-state">Aucun noeud sur le reseau</div>';
                 }
             } catch (e) {
+                console.error('Erreur loadNetworkNodes:', e);
                 container.innerHTML = '<div class="empty-state">Erreur de chargement</div>';
             }
         }
@@ -540,9 +550,10 @@
                     loadNetworkNodes();
                     loadSubscriptions();
                 } else {
-                    alert('Erreur: ' + data.error);
+                    alert('Erreur: ' + (data.error || 'Inconnue'));
                 }
             } catch (e) {
+                console.error('Erreur follow:', e);
                 alert('Erreur reseau');
             }
         }
@@ -566,10 +577,11 @@
         loadPeers();
         loadNetworkNodes();
 
-        // Auto-refresh posts every 30s
-        setInterval(loadPosts, 30000);
-        setInterval(loadPeers, 60000);
-        setInterval(loadNetworkNodes, 30000);
+        // Auto-refresh (en secondes)
+        setInterval(loadPosts, 3000);           // Posts : 3s
+        setInterval(loadSubscriptions, 3000);   // Abonnements : 3s
+        setInterval(loadPeers, 3000);           // Peers : 3s
+        setInterval(loadNetworkNodes, 3000);    // Réseau : 3s
     </script>
 </body>
 </html>
