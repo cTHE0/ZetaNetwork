@@ -125,13 +125,8 @@ impl NetworkState {
 
         match msg {
             Message::PublishPost { post } => {
-                // Vérifier la signature
-                if !post.verify() {
-                    eprintln!("[WARN] Post invalide reçu (signature incorrecte)");
-                    return;
-                }
-
                 // Vérifier si on a déjà vu ce post (éviter les boucles)
+                // On vérifie AVANT la signature pour économiser du CPU
                 let is_new = {
                     let mut seen = self.seen_posts.lock().await;
                     seen.insert(post.id.clone())
@@ -139,6 +134,12 @@ impl NetworkState {
 
                 if !is_new {
                     // Déjà vu, ignorer
+                    return;
+                }
+
+                // Vérifier la signature
+                if !post.verify() {
+                    eprintln!("[WARN] Post invalide reçu (ID: {}, signature incorrecte)", post.id);
                     return;
                 }
 
@@ -206,9 +207,12 @@ impl NetworkState {
             Message::PostsBatch { posts } => {
                 // TOUS les nœuds stockent les posts reçus (après vérification)
                 let storage = self.storage.lock().await;
+                let mut seen = self.seen_posts.lock().await;
                 for post in posts {
                     if post.verify() {
                         let _ = storage.save_post(&post);
+                        // Marquer comme vu pour éviter la re-propagation
+                        seen.insert(post.id.clone());
                     }
                 }
             }
