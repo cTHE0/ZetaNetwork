@@ -13,100 +13,156 @@ use crate::web::start_web_server;
 const DB_PATH: &str = "zeta_data.db";
 const WEB_PORT: u16 = 8080;
 
-pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
-    // Initialisation du noeud
-    println!("\nLooking for NAT type...");
-    let (nat_type, _) = nat_detector().await
-        .expect("[ERROR] NAT type not detected");
-    println!("   -> {:?}\n", nat_type);
+/// Point d'entrée principal pour un nœud client du réseau social décentralisé
+///
+/// Fonctionnement :
+/// 1. Détecte le type de NAT pour déterminer le rôle (relay ou simple client)
+/// 2. S'enregistre auprès du HubRelay avec NodeAnnounce
+/// 3. Récupère la liste des relays disponibles via GetAllNodes
+/// 4. Lance les services (web, réception, synchronisation)
+///
+/// Relay : Peut recevoir des connexions entrantes et propager les messages
+/// Client : Ne peut qu'envoyer aux relays pour publier/récupérer des posts
+pub async fn main_client(_peer_id: String, hub_relay_addr: SocketAddr) {
+    println!("\n=== Initialisation du nœud ===");
 
-    // Vérifie l'accès réseau dès le début
+    // 1. Détection du type de NAT
+    println!("Détection du type de NAT...");
+    let (nat_type, _) = nat_detector().await
+        .expect("[ERREUR] Impossible de détecter le type de NAT");
+    println!("  → Type NAT : {:?}", nat_type);
+
     if matches!(nat_type, Unknown | UdpBlocked) {
-        println!("This node can't access the network ({:?})", nat_type);
+        eprintln!("[ERREUR] Ce nœud ne peut pas accéder au réseau (NAT : {:?})", nat_type);
         return;
     }
 
-    // Créer/charger le storage et le keypair
-    let storage = Storage::new(DB_PATH).expect("[ERROR] Failed to init database");
-    let keypair = storage.get_or_create_keypair().expect("[ERROR] Failed to get keypair");
-    println!("Public key: {}", keypair.public_hex());
+    // 2. Initialisation du stockage et des clés
+    let storage = Storage::new(DB_PATH)
+        .expect("[ERREUR] Échec d'initialisation de la base de données");
+    let keypair = storage.get_or_create_keypair()
+        .expect("[ERREUR] Échec de récupération de la paire de clés");
+    println!("  → Clé publique : {}", keypair.public_hex());
 
-    // Crée le socket pour envoyer des messages
-    let socket = UdpSocket::bind("0.0.0.0:0").await.expect("Failed to bind");
-    let public_addr: SocketAddr = get_public_ip(&socket).await
-        .expect("Public IP not obtained.");
-    println!("Socket created on public address {:?}", public_addr);
+    // 3. Création du socket UDP
+    let socket = UdpSocket::bind("0.0.0.0:0").await
+        .expect("[ERREUR] Échec de création du socket");
+    let public_addr = get_public_ip(&socket).await
+        .expect("[ERREUR] Impossible d'obtenir l'IP publique");
+    println!("  → Adresse publique : {}", public_addr);
 
-    // Demande un relais disponible au hubRelay
-    println!("Asking the hub relay an available relay...");
-    let msg = Message::NeedRelay {
-        src_addr: public_addr,
-        src_id: peer_id.clone(),
-        time: now_secs(),
-    };
-    let _ = socket.send_msg(&msg, hubRelay_addr).await;
-
-    // Attends l'adresse d'un relais, de la part du hub relais
-    let relay_addr: Option<SocketAddr> = loop {
-        let Some((msg, _)) = recv_msg(&socket).await else { return };
-        match &msg {
-            Message::PeerInfo { peer_addr, peer_id, .. } => {
-                println!("Received relay address {} ({})", peer_addr, peer_id);
-                break Some(*peer_addr);
-            }
-            Message::NoRelayAvailable { .. } => {
-                println!("[WARN] No relays available on the network");
-                break None;
-            }
-            _ => println!("Unexpected message: '{}'", msg),
-        }
-    };
-
-    // Déterminer si ce nœud peut être un relay
+    // 4. Déterminer le rôle : relay ou simple client
     let is_relay = matches!(nat_type, OpenInternet | FullCone | RestrictedCone | PortRestrictedCone);
 
-    // Créer le NetworkState
-    let network = Arc::new(NetworkState::new(socket, storage, keypair, public_addr, hubRelay_addr, is_relay));
-
-    // Enregistrer auprès du relay si disponible
-    if let Some(relay_addr) = relay_addr {
-        let msg = Message::Register {
-            src_addr: public_addr,
-            src_id: peer_id.clone(),
-            dst_addr: relay_addr,
-            dst_id: "relay".to_string(),
-            time: now_secs(),
-        };
-        let _ = network.socket.send_msg(&msg, relay_addr).await;
-        network.add_peer(relay_addr, String::new()).await;
-    } else {
-        println!("[WARN] No relay, skipping registration");
-    }
-
-    // Ajout de ce noeud au réseau Zeta Network
     if is_relay {
-        println!("This node is a RELAY ({:?}) - will propagate messages", nat_type);
-        // S'annoncer comme relay au HubRelay
-        let msg = Message::BeNewRelay {
-            src_addr: public_addr,
-            src_id: peer_id.clone(),
-            time: now_secs(),
-        };
-        let _ = network.socket.send_msg(&msg, hubRelay_addr).await;
+        println!("\n[RÔLE] RELAY - Ce nœud peut recevoir des connexions et propager les messages");
     } else {
-        println!("This node is a CLIENT ({:?}) - won't propagate messages", nat_type);
+        println!("\n[RÔLE] CLIENT - Ce nœud ne peut qu'envoyer aux relays");
     }
 
-    // Démarrer les services en parallèle
-    let network_clone = Arc::clone(&network);
-    let network_web = Arc::clone(&network);
+    // 5. Créer l'état du réseau
+    let network = Arc::new(NetworkState::new(
+        socket,
+        storage,
+        keypair,
+        public_addr,
+        hub_relay_addr,
+        is_relay
+    ));
 
-    // Service web
+    // 6. S'enregistrer auprès du HubRelay
+    println!("\nEnregistrement auprès du HubRelay...");
+    let announce_msg = Message::NodeAnnounce {
+        addr: public_addr,
+        pubkey: network.keypair.public_hex(),
+        is_relay,
+        time: now_secs(),
+    };
+    if let Err(e) = network.socket.send_msg(&announce_msg, hub_relay_addr).await {
+        eprintln!("[ERREUR] Échec d'enregistrement : {}", e);
+    } else {
+        println!("  → Enregistré avec succès");
+    }
+
+    // 7. Récupérer la liste des nœuds du réseau (notamment les relays)
+    println!("Récupération de la liste des nœuds...");
+    network.request_network_nodes().await;
+    sleep(Duration::from_secs(2)).await; // Attendre la réponse
+
+    let nodes = network.get_network_nodes().await;
+    let relay_count = nodes.iter().filter(|n| n.is_relay).count();
+    println!("  → {} nœuds trouvés ({} relays)", nodes.len(), relay_count);
+
+    // 8. Lancer les services
+    println!("\nDémarrage des services...");
+    start_services(network.clone(), hub_relay_addr, public_addr).await;
+
+    // 9. Boucle principale de réception des messages
+    println!("[NET] Prêt à recevoir des messages\n");
+    run_network_loop(network).await;
+}
+
+/// Lance tous les services du nœud en arrière-plan
+async fn start_services(network: Arc<NetworkState>, hub_relay_addr: SocketAddr, public_addr: SocketAddr) {
+    // Service 1 : Interface web
+    let network_web = Arc::clone(&network);
     tokio::spawn(async move {
+        println!("  → Service web : http://localhost:{}", WEB_PORT);
         start_web_server(network_web, WEB_PORT).await;
     });
 
-    // Service de nettoyage des peers
+    // Service 2 : Keep-alive au HubRelay (toutes les 60 secondes)
+    let network_keepalive = Arc::clone(&network);
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(60)).await;
+            let msg = Message::NodeAnnounce {
+                addr: public_addr,
+                pubkey: network_keepalive.keypair.public_hex(),
+                is_relay: network_keepalive.is_relay,
+                time: now_secs(),
+            };
+            let _ = network_keepalive.socket.send_msg(&msg, hub_relay_addr).await;
+        }
+    });
+
+    // Service 3 : Mise à jour de la liste des nœuds (toutes les 30 secondes)
+    let network_nodes = Arc::clone(&network);
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(30)).await;
+            network_nodes.request_network_nodes().await;
+        }
+    });
+
+    // Service 4 : Synchronisation des posts (toutes les 30 secondes)
+    // Les clients simples demandent aux relays les posts de leurs abonnements
+    let network_sync = Arc::clone(&network);
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(30)).await;
+
+            let storage = network_sync.storage.lock().await;
+            let subscriptions = storage.get_subscriptions().unwrap_or_default();
+            drop(storage);
+
+            if !subscriptions.is_empty() {
+                let since = now_secs().saturating_sub(3600); // Posts de la dernière heure
+                network_sync.request_posts_from_peers(since, subscriptions).await;
+            }
+        }
+    });
+
+    // Service 5 : Annonce périodique aux pairs (toutes les 60 secondes)
+    let network_announce = Arc::clone(&network);
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(60)).await;
+            network_announce.announce_self().await;
+        }
+    });
+
+    // Service 6 : Nettoyage des peers inactifs (toutes les 60 secondes)
     let network_cleanup = Arc::clone(&network);
     tokio::spawn(async move {
         loop {
@@ -114,73 +170,30 @@ pub async fn main_client(peer_id: String, hubRelay_addr: SocketAddr) {
             network_cleanup.cleanup_old_peers().await;
         }
     });
-
-    // Service de récupération périodique des posts
-    let network_fetch = Arc::clone(&network);
-    tokio::spawn(async move {
-        loop {
-            sleep(Duration::from_secs(30)).await;
-            let storage = network_fetch.storage.lock().await;
-            let subs = storage.get_subscriptions().unwrap_or_default();
-            drop(storage);
-            if !subs.is_empty() {
-                let since = now_secs().saturating_sub(3600); // Posts de la dernière heure
-                network_fetch.request_posts_from_peers(since, subs).await;
-            }
-        }
-    });
-
-    // Service d'annonce périodique
-    let network_announce = Arc::clone(&network);
-    let hubRelay_addr_clone = hubRelay_addr;
-    tokio::spawn(async move {
-        loop {
-            sleep(Duration::from_secs(60)).await;
-            network_announce.announce_self().await;
-            // Keep-alive au HubRelay
-            let msg = Message::NodeAnnounce {
-                addr: public_addr,
-                pubkey: network_announce.keypair.public_hex(),
-                is_relay: network_announce.is_relay,
-                time: now_secs(),
-            };
-            let _ = network_announce.socket.send_msg(&msg, hubRelay_addr_clone).await;
-        }
-    });
-
-    // Service de récupération périodique des nœuds du réseau
-    let network_nodes = Arc::clone(&network);
-    tokio::spawn(async move {
-        loop {
-            network_nodes.request_network_nodes().await;
-            sleep(Duration::from_secs(30)).await;
-        }
-    });
-
-    // Boucle principale de réception des messages
-    println!("\n[NET] Starting main network loop...");
-    run_network_loop(network_clone).await;
 }
 
+/// Boucle principale de réception et traitement des messages
 async fn run_network_loop(network: Arc<NetworkState>) {
     let mut buf = vec![0; 4096];
     loop {
         match network.socket.recv_from(&mut buf).await {
             Ok((size, sender_addr)) => {
                 if size == 0 || size >= 4096 {
-                    eprintln!("[WARN] Invalid message size: {}", size);
                     continue;
                 }
+
                 match bincode::deserialize::<Message>(&buf[..size]) {
                     Ok(msg) => {
                         network.handle_message(msg, sender_addr).await;
                     }
                     Err(e) => {
-                        eprintln!("[ERROR] Deserialization failed: {}", e);
+                        eprintln!("[ERREUR] Désérialisation : {}", e);
                     }
                 }
             }
-            Err(e) => eprintln!("[ERROR] recv_from: {}", e),
+            Err(e) => {
+                eprintln!("[ERREUR] Réception : {}", e);
+            }
         }
     }
 }

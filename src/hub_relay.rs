@@ -36,7 +36,7 @@ impl NodeInfo {
     }
 }
 
-pub async fn main_hubRelay(peer_id: String, hubRelay_addr: SocketAddr) {
+pub async fn main_hub_relay(peer_id: String, hub_relay_addr: SocketAddr) {
     println!("\n=== HubRelay : Serveur d'annuaire du réseau social ===");
 
     // Bind sur le port configuré
@@ -48,7 +48,7 @@ pub async fn main_hubRelay(peer_id: String, hubRelay_addr: SocketAddr) {
 
     println!("Écoute sur {} (ID: {})", public_addr, peer_id);
 
-    if hubRelay_addr != public_addr {
+    if hub_relay_addr != public_addr {
         eprintln!("[ERREUR] L'adresse publique ne correspond pas à l'adresse configurée");
         return;
     }

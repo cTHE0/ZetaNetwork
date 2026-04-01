@@ -233,14 +233,9 @@ impl NetworkState {
                 println!("[NET] Liste des nœuds mise à jour ({} nœuds)", network_nodes.len());
             }
 
-            Message::Register { src_addr, src_id, time, .. } => {
-                // Un peer s'enregistre
-                let mut peers = self.peers.lock().await;
-                peers.insert(src_addr, (src_id.clone(), time));
-            }
-
-            _ => {
-                // Messages non gérés ici (traités ailleurs)
+            // Messages destinés au HubRelay uniquement (ignorés par les clients/relays)
+            Message::GetAllNodes { .. } => {
+                // Ce message est destiné au HubRelay, pas aux clients/relays
             }
         }
     }

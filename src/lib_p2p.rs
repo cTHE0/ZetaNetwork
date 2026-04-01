@@ -26,70 +26,7 @@ pub enum Mode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
-    Register {  // Client → Relay : "Je m'enregistre, voici mon adresse et mon id"
-        src_addr: SocketAddr,
-        src_id: String,
-        dst_addr: SocketAddr,
-        dst_id: String,
-        time: u64,
-    },
-
-    Connect {  // Dial → Relay : "Mets-moi en contact avec ce peer_id"
-        src_addr: SocketAddr,
-        src_id: String,
-        dst_addr: SocketAddr,   // l'id du Listen recherché
-        dst_id: String,
-        time: u64,
-    },
-
-    AskForAddr {  // Relay → Client : "Voici l'adresse+id du peer que tu cherches"
-        src_addr: SocketAddr,
-        src_id: String,
-        peer_id: String,
-        time: u64,
-    },
-
-    PeerInfo {  // Relay → Client : "Voici l'adresse+id du peer que tu cherches"
-        peer_addr: SocketAddr,
-        peer_id: String,
-    },
-
-    Classic {  // Peer → Peer : message direct (hole punching, hello, etc.)
-        src_addr: SocketAddr,
-        src_id: String,
-        dst_addr: SocketAddr,
-        dst_id: String,
-        txt: String,
-        time: u64,
-    },
-
-    BeNewRelay {  // new Relay → Serveur stockant les adresses des relais : "Je me déclare relay"
-        src_addr: SocketAddr,
-        src_id: String,
-        time: u64,
-    },
-
-    NeedRelay {
-        src_addr: SocketAddr,
-        src_id: String,
-        time: u64,
-    },
-
-    NoRelayAvailable {
-        src_addr: SocketAddr,
-        src_id: String,
-        dst_addr: SocketAddr,
-        dst_id: String,
-        time: u64,
-    },
-
-    Ack {
-        src_addr: SocketAddr,
-        src_id: String,
-        time: u64,
-    },
-
-    // ========== Messages pour le réseau social ==========
+    // ========== Messages réseau social décentralisé ==========
 
     PublishPost {  // Diffuser un nouveau post aux peers
         post: Post,
@@ -146,57 +83,6 @@ impl UdpSocketExt for UdpSocket {
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Message::Register { src_addr, src_id, dst_addr, dst_id, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[Register] {} ({}) → {} ({}) ({})", src_addr, src_id, dst_addr, dst_id, time_str)
-            }
-            Message::Connect { src_addr, src_id, dst_id, dst_addr, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[Connect] {} ({}) → {} ({}) ({})", src_addr, src_id, dst_addr, dst_id, time_str)
-            }
-            Message::AskForAddr { src_addr, src_id, peer_id, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[AskInfo] {} ({}) asks for {}'s addr ({})", *src_addr, src_id, peer_id, time_str)
-            }
-            Message::PeerInfo { peer_addr, peer_id } => {
-                write!(f, "[PeerInfo] {} ({})", peer_addr, peer_id)
-            }
-            Message::Classic { src_addr, src_id, dst_addr, dst_id, txt, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[{} ({}) → {} ({})] \"{}\" ({})", src_addr, src_id, dst_addr, dst_id, txt, time_str)
-            }
-            Message::BeNewRelay { src_addr, src_id, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[BeNewRelay] {} ({}) ({})", src_addr, src_id, time_str)
-            }
-            Message::NeedRelay { src_addr, src_id, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[NeedRelay] {} ({}) ({})", src_addr, src_id, time_str)
-            }
-            Message::Ack { src_addr, src_id, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[Ack] {} ({}) ({})", src_addr, src_id, time_str)
-            }
-            Message::NoRelayAvailable { src_addr, src_id, dst_addr, dst_id, time } => {
-                let time_str = DateTime::<Utc>::from_timestamp(*time as i64, 0)
-                    .map(|dt| dt.format("%H:%M:%S").to_string())
-                    .unwrap_or_else(|| format!("t={}", time));
-                write!(f, "[NoRelayAvailable] [{} ({}) → {} ({})] ({})", src_addr, src_id, dst_addr, dst_id, time_str)
-            }
             Message::PublishPost { post } => {
                 write!(f, "[PublishPost] {}", post)
             }
