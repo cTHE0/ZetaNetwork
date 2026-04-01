@@ -77,11 +77,11 @@ pub async fn main_hub_relay(peer_id: String, hub_relay_addr: SocketAddr) {
     println!("Prêt à recevoir des nœuds...\n");
 
     // Boucle principale de réception
-    let mut buf = vec![0; 4096];
+    let mut buf = vec![0; 65536];  // 64KB au lieu de 4KB
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((size, sender_addr)) => {
-                if size == 0 || size >= 4096 {
+                if size == 0 || size >= 65536 {
                     continue;
                 }
 

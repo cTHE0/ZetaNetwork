@@ -127,9 +127,9 @@ pub async fn get_public_ip(socket: &UdpSocket) -> Result<SocketAddr> {
 }
 
 pub async fn recv_msg(socket: &UdpSocket) -> Option<(Message, SocketAddr)> {
-    let mut buf = [0; 4096];  // Buffer augmenté pour les posts
+    let mut buf = [0; 65536];  // 64KB au lieu de 4KB (pour PostsBatch de 100 posts)
     let (size, sender_addr) = socket.recv_from(&mut buf).await.expect("Nothing received");
-    if size == 0 || size >= 4096 {
+    if size == 0 || size >= 65536 {
         println!("The message's size is incorrect({})", size);
         return None;
     }

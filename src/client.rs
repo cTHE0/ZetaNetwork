@@ -161,10 +161,16 @@ async fn start_services(network: Arc<NetworkState>, hub_relay_addr: SocketAddr, 
 
             let storage = network_sync.storage.lock().await;
             let subscriptions = storage.get_subscriptions().unwrap_or_default();
+
+            // Optimisation: demander uniquement les posts DEPUIS le dernier post connu
+            let since = storage.get_last_sync_timestamp()
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| now_secs().saturating_sub(3600)); // Fallback: 1h si base vide
+
             drop(storage);
 
             if !subscriptions.is_empty() {
-                let since = now_secs().saturating_sub(3600); // Posts de la dernière heure
                 network_sync.request_posts_from_peers(since, subscriptions).await;
             }
         }
@@ -191,11 +197,11 @@ async fn start_services(network: Arc<NetworkState>, hub_relay_addr: SocketAddr, 
 
 /// Boucle principale de réception et traitement des messages
 async fn run_network_loop(network: Arc<NetworkState>) {
-    let mut buf = vec![0; 4096];
+    let mut buf = vec![0; 65536];  // 64KB au lieu de 4KB (pour PostsBatch de 100 posts)
     loop {
         match network.socket.recv_from(&mut buf).await {
             Ok((size, sender_addr)) => {
-                if size == 0 || size >= 4096 {
+                if size == 0 || size >= 65536 {
                     continue;
                 }
 

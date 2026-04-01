@@ -220,6 +220,16 @@ impl Storage {
         )?;
         Ok(())
     }
+
+    // ========== Last Sync Timestamp (pour optimiser la synchronisation) ==========
+
+    pub fn get_last_sync_timestamp(&self) -> Result<Option<u64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT MAX(timestamp) FROM posts"
+        )?;
+        let result: Option<u64> = stmt.query_row([], |row| row.get(0)).ok();
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
